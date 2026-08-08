@@ -1,0 +1,4 @@
+ 483 PASS
+  24 XFAIL
+  22 FAIL
+   5 NO-OUTPUT
