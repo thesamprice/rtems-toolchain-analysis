@@ -265,6 +265,41 @@ Two defensible fixes, in order of preference:
 Until then `dl05` builds and passes only if `-stdlib=libstdc++` is kept out of `LDFLAGS`, which
 breaks other C++ links — the two states are not simultaneously achievable with flat flags.
 
+### O7 — Global constructors: one `.init_array` entry missing vs GCC
+
+Affects `spglobalcon02` and `rcxx01`, and is the next thing to try.
+
+`rcxx01` faults with a load access fault (`mcause 0x5`) inside
+`std::ostream::sentry::sentry` — i.e. `std::cout` is used before it is constructed. Comparing the
+same test between toolchains:
+
+```
+gcc   .init_array  size 0x1c   (7 entries)
+clang .init_array  size 0x18   (6 entries)
+```
+
+One constructor is missing. The likely candidate is `crtbegin.o`'s `frame_dummy`, which is also
+what registers `.eh_frame` for the unwinder — so this may explain both the constructor symptom and
+any exception-handling problems.
+
+The cause is workaround #10 from [05](05-clang-riscv-bringup.md): `-nostartfiles` was used to
+suppress newlib's stub `crt0.o`, but it also suppresses `crti.o`, `crtbegin.o`, `crtend.o` and
+`crtn.o`. GCC's `-qrtems` spec is precise about this — it drops only `crt0.o` and *adds* the
+others:
+
+```
+*startfile:  %{!qrtems:crt0%O%s} %{qrtems:crti%O%s crtbegin%O%s}
+*endfile:    %{qrtems:crtend%O%s crtn%O%s ...}
+```
+
+**Next step:** put `crti.o crtbegin.o` in `LINKFLAGS` (waf places it before the objects) and
+`crtend.o crtn.o` at the end of `LDFLAGS`, then re-run `rcxx01` and `spglobalcon02`. All four files
+exist in the GCC multilib directory. This was not tried yet only because a rebuild would have
+invalidated a testsuite run already in progress.
+
+This is a good illustration of the report's central claim: `-nostartfiles` is a blunt instrument
+standing in for one line of a GCC spec, and a ToolChain would get it right.
+
 ### O4 — Unexplained test failures
 
 Not investigated at all:
@@ -291,6 +326,7 @@ Plus one unresolved link error in the build: **`_TLS_Configuration`**.
 | Open, root-caused | 1 (O2) |
 | Open, self-inflicted | 1 (O3) |
 | Open, uninvestigated | 1 (O4) |
+| Open, next step identified | 1 (O7) |
 
 **O1 is now mostly fixed** — building compiler-rt builtins with hidden symbols disabled, plus
 forcing the helpers into the libdl base images, took the `dl` tests from 4 passing to 8. What is
