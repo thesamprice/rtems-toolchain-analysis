@@ -198,18 +198,33 @@ compiler-rt build is a recipe, not a patch — nothing in RTEMS or LLVM needs ch
 
 ### O2 — GNU ld cannot link Clang's output for this target
 
-Attempted as a fix for O1. `riscv-rtems7-ld` (binutils in the RTEMS 7 toolchain) fails with:
+Attempted as a fix for O1. `riscv-rtems7-ld` fails with:
 
 ```
 riscv-rtems7-ld: DWARF error: mangled line number section (bad file number)
 ```
 
-Only 15 of 721 executables linked. Adding `-gdwarf-4` did **not** help (10 linked). Not
-investigated further.
+Only 15 of 721 executables linked; adding `-gdwarf-4` made it worse (10).
+
+**New evidence suggesting the diagnosis above is wrong.** The toolchain's linker is
+**GNU ld 2.46.1**, which is recent, and it handles a simple Clang `-g` object without complaint:
+
+```
+$ clang --target=riscv32-unknown-rtems7 -march=rv32imafc_zicsr_zifencei -mabi=ilp32f -g -c t.c
+$ riscv-rtems7-ld -r t.o -o t2.o
+$ echo $?
+0
+```
+
+GNU `ld` reads debug info to attach line numbers **to error messages it is already emitting**. So
+the DWARF complaint is most likely a *symptom* of some other link failure, not the cause — and the
+real error was probably scrolled past. This was not chased further because a rebuild competes for
+CPU with a testsuite run; the next step is to capture the full linker output for one failing
+executable rather than the last few lines.
 
 This matters beyond `libdl`: "Clang + GNU binutils" is Tier A of
-[04](04-llvm-gap-analysis.md) — the cheapest useful configuration — and it does not currently work
-on this toolchain.
+[04](04-llvm-gap-analysis.md) — the cheapest useful configuration — so whether it works is worth
+knowing for its own sake.
 
 ### O3 — `rtems-syms` exports *undefined* symbols, breaking `dl05`
 
