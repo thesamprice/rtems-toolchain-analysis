@@ -475,11 +475,39 @@ same dirty worktree reported twice. The RSB actually pins rtems-tools at
 
 The table at the top is a real result and a narrow one.
 
-**There is still no Clang driver for RTEMS.** Everything `-qrtems` does in GCC is hand-rolled in
-[`repro/config.ini`](repro/config.ini): the sysroot, `-nostartfiles` plus four explicit crt
-objects, three `-L` paths, `-stdlib=libstdc++` with three `-isystem` directories of GCC's C++
-headers, `-ftls-model=local-exec`, and a hand-repacked `libgcc_eh.a`. Every path is absolute and
-machine-specific. Tier A of [04](04-llvm-gap-analysis.md) is untouched.
+**There is still no Clang driver for RTEMS**, and everything `-qrtems` does in GCC is hand-rolled
+in [`repro/config.ini`](repro/config.ini). Each remaining entry was tested by removing it and
+rebuilding, which is worth recording because two of them turned out not to be workarounds at all:
+
+| flag | verdict |
+|---|---|
+| hand-repacked `libgcc_eh.a` | **removed** — plain `-lgcc` now works |
+| `-ftls-model=local-exec` | **removed** from here — moved into RTEMS's clang spec, see F6 |
+| `-L .../rv32imafc/ilp32f` (newlib) | **required** — it is doing multilib selection, not path hinting |
+| `-idirafter .../15.2.0/include` | **required**, for exactly one header: `<gcov.h>` |
+| `--sysroot`, `-rtlib=compiler-rt` | not workarounds — ordinary cross-compilation options |
+| `-nostartfiles` + four crt objects, `-stdlib=libstdc++` + three `-isystem` dirs | **required** — the `-qrtems` gap proper |
+
+Three findings from that exercise:
+
+- **The `libgcc_eh.a` repack was obsolete.** It existed so the unwinder could be linked without
+  dragging in libgcc's hidden `__muldf3`, which broke libdl symbol export (O1). Once O1 was fixed
+  properly — compiler-rt built with visible symbols, plus `-u` forcing — the repack stopped being
+  necessary and nobody had rechecked. Removing it leaves every `dl` test and every C++ unwinding
+  test (`exit03`, `iostream`, `rcxx01`, `spcxx01`) passing.
+- **The newlib `-L` is not redundant with `--sysroot`.** Remove it and clang finds the *default*
+  `<sysroot>/lib/libc.a` instead of the `rv32imafc/ilp32f` one, and the link fails with
+  `cannot link object files with different floating-point ABI`. Clang has no multilib knowledge for
+  RTEMS, so the `-L` is selecting the multilib by hand. That is a ToolChain responsibility.
+- **`-idirafter` exists for one header.** `cpukit/libtest` unconditionally includes `<gcov.h>`,
+  which only GCC ships; clang has no such header. So RTEMS's test library cannot be built by clang
+  without borrowing GCC's include directory. That is an RTEMS portability gap rather than a
+  configuration hack, and it is not gated by any build option.
+
+One more instance of the missing driver, found while rebuilding: dl12's incremental (`-r`) link
+step emits `ld: unknown options: --sysroot=... -Bstatic --start-group --end-group`. That is
+**macOS's host `ld`**, not `ld.lld` — the same fall-through to whatever linker is on `PATH` that
+[04](04-llvm-gap-analysis.md) opens with, still happening in one build rule.
 
 **The runtime is still GCC's.** newlib, libgcc, libgcc_eh, libstdc++ and the crt files all come
 from the RSB-built GCC. The only LLVM runtime component is `libclang_rt.builtins.a`. This is Clang
