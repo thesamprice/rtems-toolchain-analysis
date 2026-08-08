@@ -373,20 +373,34 @@ it even though it does not fix this particular test. It belongs in a ToolChain, 
 tests; run 3 runs 673, because C++ tests that previously failed to link now build. They are newly
 built and failing.
 
-### O4 — Unexplained test failures
+### O4 — Remaining failures
 
-Not investigated at all:
+Down to four, from twenty. GCC passes all of them, so each is a Clang-specific difference.
 
-| test | note |
-|---|---|
-| `sptls01` `sptls04` | TLS; plausibly fixed by F6 but **not re-measured** |
-| `psx13` | — |
-| `spglobalcon02` | global constructors; `-nostartfiles` removed `crt0.o` and nothing replaced `crtbegin`/`crtend` |
-| `termios02` | — |
-| `ts-validation-intr` | — |
-| `ts-validation-no-clock-0` | — |
+#### `sptls01` — TLS block size, diagnosed
 
-Plus one unresolved link error in the build: **`_TLS_Configuration`**.
+```
+WARNING: The thread-local storage size is 8. It should be
+exactly one for this test. Check the BSP implementation.
+```
+
+The test declares a single 1-byte thread-local and asserts `tls_size == 1`. Clang produces a TLS
+block of 8. This is an alignment/padding difference in how the TLS segment is laid out, not a
+correctness bug in either compiler — the test is over-specified, asserting an exact size that
+depends on compiler layout choices. Worth raising with RTEMS as a test-portability question rather
+than fixing in the toolchain.
+
+#### `sptls02` — C++ `thread_local` with a constructor
+
+`A::globalCounter() = 0` where 123 is expected. Global constructors now run (F11), but a C++
+`thread_local` object with a dynamic initialiser needs *per-thread* initialisation via the
+`__cxa_thread_atexit` / TLS-wrapper mechanism, which is a separate path. Related to the link
+diagnostic `undefined symbol: thread-local initialization routine for _tls_stderr` seen earlier.
+Not investigated further.
+
+#### `psx13`, `termios02` — not investigated
+
+No analysis done on these two.
 
 ---
 
@@ -398,7 +412,7 @@ Plus one unresolved link error in the build: **`_TLS_Configuration`**.
 | Worked around, needs a proper home | 1 (F6) |
 | Open, root-caused | 1 (O2) |
 | Open, self-inflicted | 1 (O3) |
-| Open, uninvestigated | 1 (O4) |
+| Open | 4 tests (O4): 2 diagnosed, 2 untouched |
 | Open, hypothesis disproven | 1 (O7) |
 
 **O1 is now mostly fixed** — building compiler-rt builtins with hidden symbols disabled, plus
