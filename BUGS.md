@@ -211,14 +211,44 @@ This matters beyond `libdl`: "Clang + GNU binutils" is Tier A of
 [04](04-llvm-gap-analysis.md) — the cheapest useful configuration — and it does not currently work
 on this toolchain.
 
-### O3 — `dl05` regressed from passing to not building
+### O3 — `rtems-syms` exports *undefined* symbols, breaking `dl05`
 
-Caused by this work. `-stdlib=libstdc++` in `LDFLAGS` is required for other C++ links but drags
-`cow-stdexcept.o` and its `_ITM_*` references into `dl05` (O1). Without the flag `dl05` links and
-passes but other C++ tests fail.
+Root-caused precisely. The fix belongs in **rtems-tools**, which is not checked out here, so it is
+reported rather than patched.
 
-**The two states are not simultaneously achievable with flat flags** — itself an argument for a
-ToolChain that can make a coherent set of choices.
+`rtems-syms` emits, for every symbol it harvests from the base image:
+
+```
+  .asciz "_ITM_RU1"
+  .long  _ITM_RU1        /* SYM_VALUE */
+```
+
+That `.long` is a **strong data relocation** requiring a definition at link time. But `_ITM_RU1`
+is *undefined* in the base image:
+
+```
+6308: 00000000  0 NOTYPE  WEAK  DEFAULT  UND _ITM_RU1
+```
+
+so the final link fails with `undefined symbol: _ITM_RU1 referenced by dl05-sym.c`.
+
+The symbols are libstdc++'s transactional-memory hooks, pulled in with `cow-stdexcept.o` by any
+use of `std::logic_error`. They are declared **weak undefined** precisely because `libitm` is
+usually absent — the intent is that they resolve to 0. `rtems-syms` discards the weak binding and
+emits a strong reference.
+
+GCC never hits this because GNU `ld` drops undefined weak symbols from the static executable's
+`.symtab`; lld retains them. Same root disagreement as O1, opposite direction.
+
+Two defensible fixes, in order of preference:
+
+1. **Skip symbols with `st_shndx == SHN_UNDEF`.** A table of *the base image's global symbols*
+   should list only symbols the base image actually defines; an undefined symbol has no address to
+   record. This is the correct fix regardless of linker.
+2. Preserve the weak binding (emit `.weak`) so the reference resolves to 0.
+
+Until then `dl05` builds and passes only if `-stdlib=libstdc++` is kept out of `LDFLAGS`, which
+breaks other C++ links — the two states are not simultaneously achievable with flat flags.
 
 ### O4 — Unexplained test failures
 
