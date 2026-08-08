@@ -117,42 +117,43 @@ for the cast. `ofw01`, `fdt01` and `fdt02` pass before and after under GCC.
 
 ## Open
 
-### O1 — lld and GNU ld disagree about `.symtab`, breaking `libdl`
+### O1 — lld and GNU ld disagree about `.symtab` *(mostly fixed)*
 
-**Impact: `dl02`, `dl07`, `dl08`, `dl09` (and `dl06`).** Root-caused, not fixed.
+**`dl` tests went from 4 passing to 8.** `dl02` and `dl07` now pass.
 
-libgcc declares its soft-float helpers hidden:
+The root cause stands: libgcc declares its soft-float helpers `GLOBAL HIDDEN`, **lld demotes
+`STV_HIDDEN` to `STB_LOCAL` in a static link's `.symtab`, GNU ld leaves them `STB_GLOBAL`**, and
+`rtems-syms` harvests only global symbols — so under lld they vanish from the libdl symbol table.
 
-```
-2012: 00000000  2412 FUNC    GLOBAL HIDDEN   1 __muldf3
-```
+The fix is two halves, and **each is useless without the other**, which is why the first attempt
+looked like a dead end:
 
-**lld demotes `STV_HIDDEN` to `STB_LOCAL` in a static link's `.symtab`; GNU ld leaves them
-`STB_GLOBAL`.** `rtems-syms` harvests only *global* symbols from the base image, so under lld
-every hidden libgcc helper silently disappears from the runtime linker's table and modules fail
-with "unresolved externals".
+1. **Build compiler-rt builtins with `COMPILER_RT_BUILTINS_HIDE_SYMBOLS=OFF`** (it defaults ON).
+   That yields `GLOBAL DEFAULT` rather than `GLOBAL HIDDEN`, so the symbols survive into
+   `.symtab`. Recipe: [`repro/build-compiler-rt.sh`](repro/build-compiler-rt.sh).
+2. **Force them into the base image** with `-u` via `LIBDL_TESTS_LDFLAGS`. RTEMS already does this
+   for `__extendsfdf2`; extended to `__muldf3`, `__eqdf2`, `__fixdfsi`.
 
-The same disagreement in reverse breaks `dl05`: lld **retains** undefined weak symbols
-(libstdc++'s `_ITM_*` transactional-memory hooks), `rtems-syms` emits strong references, and the
-link fails with `undefined symbol: _ITM_RU1`. GNU ld drops them.
+Earlier I recorded that `-u` "does not work". That was correct *at the time* and for the wrong
+reason: with libgcc's hidden symbols `-u` cannot help, because it changes which archive members
+are pulled, not symbol binding. Once compiler-rt provides global symbols, `-u` is exactly what is
+needed. Both halves are required.
 
-One root cause — **`rtems-syms` assumes GNU ld's `.symtab` conventions** — two opposite failure
-modes.
+Two practical traps found while doing it:
 
-Ruled out by experiment:
-- **`-u__muldf3` etc. via `LIBDL_TESTS_LDFLAGS` does not help.** The symbols are already in the
-  image; `-u` changes which archive members are pulled, not symbol binding. Verified: still `t`
-  (local) afterwards. This is the mechanism RTEMS already uses for `-u__extendsfdf2`, so it was
-  the obvious thing to try, and it is genuinely insufficient here.
-- **Switching to GNU `ld` does not work either** — see O2.
+- **compiler-rt ships no unwinder**, and this toolchain has no `libgcc_eh.a`. Linking all of
+  libgcc to get `_Unwind_*` reintroduces its hidden `__muldf3` and undoes the fix. Extract a
+  minimal `libgcc_eh.a` from libgcc's three unwind objects instead.
+- **waf does not relink the libdl `.pre` base images** when only link flags change. Stale `.pre`
+  files made the fix look ineffective twice. Delete `dl*/dl*.pre` when changing runtime libraries.
 
-Candidate fixes, none attempted:
-1. Build **compiler-rt builtins** for `riscv32-unknown-rtems7` and drop libgcc. The principled
-   fix; already Tier B in [04](04-llvm-gap-analysis.md). Needs checking whether compiler-rt's
-   builtins are themselves hidden.
-2. Teach `rtems-syms` to include local symbols, or to skip undefined weak ones. Needs RTEMS
-   maintainer input on intent — it is a tooling change to accommodate a linker difference.
-3. `llvm-objcopy --globalize-symbol` on the `.pre` image before `rtems-syms`. A hack.
+Still failing: `dl06` (`global symbol not found: _tls_rand48_add` — same class, a TLS symbol not
+forced into the base image), and `dl08`/`dl09`, which now get much further — they load every
+module and run its constructors before stopping. Their remaining problem looks unrelated to
+symbols; `%f` prints literally, suggesting newlib's float `printf` support is not linked in.
+
+The RTEMS-side change is on branch **`fix/clang-riscv-build-support`** @ `93cc3dbd5c`. The
+compiler-rt build is a recipe, not a patch — nothing in RTEMS or LLVM needs changing for it.
 
 ### O2 — GNU ld cannot link Clang's output for this target
 
@@ -216,15 +217,19 @@ rather than suppressing.
 
 | | count |
 |---|---:|
-| Fixed and pushed | 6 (F1–F5, F7) |
+| Fixed and pushed | 7 (F1–F5, F7, most of O1) |
 | Worked around, needs a proper home | 1 (F6) |
-| Open, root-caused | 2 (O1, O2) |
+| Open, root-caused | 1 (O2) |
 | Open, self-inflicted | 1 (O3) |
 | Open, uninvestigated | 3 (O4, O5, O6) |
 
-The single highest-value open item is **O1**, because it accounts for five `dl` failures and its
-principled fix — building compiler-rt builtins — also removes the libgcc dependency that makes
-the whole configuration awkward.
+**O1 is now mostly fixed** — building compiler-rt builtins with hidden symbols disabled, plus
+forcing the helpers into the libdl base images, took the `dl` tests from 4 passing to 8. What is
+left there is `dl06` (one more symbol of the same class) and `dl08`/`dl09`, which now fail well
+past the symbol stage.
+
+The highest-value remaining item is **O2**: GNU `ld` cannot link Clang's output for this target at
+all, which blocks the cheapest useful configuration in [04](04-llvm-gap-analysis.md).
 
 The single most valuable item to report upstream independent of any of this is **F5**: latent
 undefined behaviour in RTEMS's `lseek`, present regardless of compiler.

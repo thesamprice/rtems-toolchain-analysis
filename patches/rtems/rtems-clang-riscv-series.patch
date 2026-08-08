@@ -1,7 +1,170 @@
+From 0937a8d3e9be6136b2c929764b71c2a00a97f998 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Wed, 29 Jul 2026 22:01:54 -0400
+Subject: [PATCH 1/3] bsps/riscv/mbv: Probe a fixed address for a device tree
+
+The boot loader hand-over covers real hardware, where something runs before
+RTEMS and can put a device tree pointer in a1.  It does not cover the QEMU
+amd-microblaze-v-generic machine, which synthesizes no device tree, ignores
+-dtb, has no mask ROM to run ahead of the program, and leaves a1 zero.  The
+only thing left there is to agree on an address: a blob can be placed
+anywhere in the address space with
+
+  -device loader,file=<blob>,addr=<address>,force-raw=on
+
+which is also how the upstream documentation of this machine loads data.
+
+Add MBV_FDT_PROBE_ADDRESS.  When it is non-zero, the address is validated at
+RTEMS_SYSINIT_BSP_EARLY and copied into the BSP owned blob if it holds a
+device tree.  A boot loader supplied device tree wins, since the start code
+has already installed it by then.
+
+An address at which there is no device tree is deliberately not an error.
+Probing is a guess and a guess which does not pan out has to leave the BSP
+with its build time configuration rather than stop it; there is also nothing
+which could distinguish memory holding no device tree from memory holding
+something else.  The address does have to be readable at reset, which is
+why the option is off by default and why the LMB BRAM at the bottom of the
+address space is the natural place to put a blob: it is readable from reset
+and outside every RTEMS linker region, so neither the BSS clearing nor the
+work area can overwrite it.
+
+With the default of zero the probe is compiled out entirely; hello.exe is
+the same size to the byte and contains no mbv_fdt_probe symbol.  Both BSPs:
+517 PASS / 24 XFAIL / 2 XFAIL-KNOWN / 0 FAIL on QEMU 10.2.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ bsps/riscv/mbv/start/mbv-fdt.c                | 56 ++++++++++++++++---
+ spec/build/bsps/riscv/mbv/grp.yml             |  2 +
+ spec/build/bsps/riscv/mbv/optfdtprobeaddr.yml | 21 +++++++
+ 3 files changed, 72 insertions(+), 7 deletions(-)
+ create mode 100644 spec/build/bsps/riscv/mbv/optfdtprobeaddr.yml
+
+diff --git a/bsps/riscv/mbv/start/mbv-fdt.c b/bsps/riscv/mbv/start/mbv-fdt.c
+index e976172e1e..77fd933fc6 100644
+--- a/bsps/riscv/mbv/start/mbv-fdt.c
++++ b/bsps/riscv/mbv/start/mbv-fdt.c
+@@ -404,17 +404,59 @@ static void mbv_fdt_configure( const void *fdt )
+   }
+ }
+ 
++#endif /* MBV_USE_FDT */
++
++#if MBV_FDT_PROBE_ADDRESS != 0
++/**
++ * @brief Looks for a device tree blob at a fixed address.
++ *
++ * A platform without a boot loader has no way to hand a device tree pointer to
++ * the program, so the only thing left is to agree on an address.  The QEMU
++ * amd-microblaze-v-generic machine is such a platform: it synthesizes no
++ * device tree, has no mask ROM to run before the program, and leaves a1 zero,
++ * but a blob can be loaded anywhere in its address space with
++ *
++ *   -device loader,file=<blob>,addr=<address>,force-raw=on
++ *
++ * The address is validated, and an address at which there is no device tree is
++ * not an error: probing is a guess, and a guess which does not pan out has to
++ * leave the BSP with its build time configuration rather than stop it.  Note
++ * that the address does have to be readable, since there is nothing else that
++ * could tell the difference between unmapped memory and memory holding no
++ * device tree.
++ */
++static void mbv_fdt_probe( void )
++{
++  /*
++   * A device tree from a boot loader wins.  The start code has already copied
++   * it into the blob by the time this runs, which is what makes the pointer
++   * differ from the empty tree.
++   */
++  if ( mbv_fdt != &mbv_fdt_empty_tree[ 0 ] ) {
++    return;
++  }
++
++  bsp_fdt_copy( (const void *) (uintptr_t) MBV_FDT_PROBE_ADDRESS );
++}
++#endif /* MBV_FDT_PROBE_ADDRESS */
++
++#if defined( MBV_USE_FDT ) || MBV_FDT_PROBE_ADDRESS != 0
+ /*
+- * Resolve the configuration before the interrupt controller is initialized by
+- * bsp_start() at RTEMS_SYSINIT_BSP_START and before the free running counter
+- * is started at RTEMS_SYSINIT_CPU_COUNTER.  RTEMS_SYSINIT_BSP_EARLY also
+- * precedes RTEMS_SYSINIT_ZERO_MEMORY and RTEMS_SYSINIT_WORKSPACE, so a device
+- * tree which happens to live inside the RTEMS memory region has already been
+- * copied out of it by then.
++ * Find and parse the device tree before the interrupt controller is
++ * initialized by bsp_start() at RTEMS_SYSINIT_BSP_START and before the free
++ * running counter is started at RTEMS_SYSINIT_CPU_COUNTER.
++ * RTEMS_SYSINIT_BSP_EARLY also precedes RTEMS_SYSINIT_ZERO_MEMORY and
++ * RTEMS_SYSINIT_WORKSPACE, so a device tree which happens to live inside the
++ * RTEMS memory region has already been copied out of it by then.
+  */
+ static void mbv_fdt_initialize( void )
+ {
++#if MBV_FDT_PROBE_ADDRESS != 0
++  mbv_fdt_probe();
++#endif
++#ifdef MBV_USE_FDT
+   mbv_fdt_configure( mbv_fdt );
++#endif
+ }
+ 
+ RTEMS_SYSINIT_ITEM(
+@@ -422,4 +464,4 @@ RTEMS_SYSINIT_ITEM(
+   RTEMS_SYSINIT_BSP_EARLY,
+   RTEMS_SYSINIT_ORDER_FIRST
+ );
+-#endif /* MBV_USE_FDT */
++#endif
+diff --git a/spec/build/bsps/riscv/mbv/grp.yml b/spec/build/bsps/riscv/mbv/grp.yml
+index e29cf142c3..164a397fc3 100644
+--- a/spec/build/bsps/riscv/mbv/grp.yml
++++ b/spec/build/bsps/riscv/mbv/grp.yml
+@@ -40,6 +40,8 @@ links:
+   uid: optconsoleinterrupts
+ - role: build-dependency
+   uid: optextirqmax
++- role: build-dependency
++  uid: optfdtprobeaddr
+ - role: build-dependency
+   uid: optintcbase
+ - role: build-dependency
+diff --git a/spec/build/bsps/riscv/mbv/optfdtprobeaddr.yml b/spec/build/bsps/riscv/mbv/optfdtprobeaddr.yml
+new file mode 100644
+index 0000000000..439d32dc01
+--- /dev/null
++++ b/spec/build/bsps/riscv/mbv/optfdtprobeaddr.yml
+@@ -0,0 +1,21 @@
++SPDX-License-Identifier: CC-BY-SA-4.0 OR BSD-2-Clause
++actions:
++- get-integer: null
++- assert-uint32: null
++- format-and-define: null
++build-type: option
++copyrights:
++- Copyright (C) 2026 Samuel Price
++default:
++- enabled-by: true
++  value: 0x00000000
++description: |
++  address at which the BSP looks for a device tree blob when no boot loader
++  handed one over, or zero to not look for one at all; the address must be
++  readable at reset and should be outside the RTEMS memory region, for example
++  in the LMB BRAM of the design
++enabled-by: true
++format: '{:#010x}'
++links: []
++name: MBV_FDT_PROBE_ADDRESS
++type: build
+-- 
+2.39.5 (Apple Git-154)
+
+
 From e29ae7fb597a55f9e1201df3c19a277211cf1972 Mon Sep 17 00:00:00 2001
 From: Samuel Price <thesamprice@gmail.com>
 Date: Wed, 29 Jul 2026 22:15:32 -0400
-Subject: [PATCH 1/2] bsps/riscv/mbv: Add a device tree source for the QEMU
+Subject: [PATCH 2/3] bsps/riscv/mbv: Add a device tree source for the QEMU
  machine
 
 Add a device tree describing the QEMU amd-microblaze-v-generic machine,
@@ -236,7 +399,7 @@ index 06dbfa1150..ae0a746c66 100644
 From 449635c3f7bd42afce4687fff8d29260bf68521d Mon Sep 17 00:00:00 2001
 From: Samuel Price <thesamprice@gmail.com>
 Date: Wed, 29 Jul 2026 22:23:39 -0400
-Subject: [PATCH 2/2] bsps/riscv/mbv: Reject out-of-range device tree interrupt
+Subject: [PATCH 3/3] bsps/riscv/mbv: Reject out-of-range device tree interrupt
  numbers
 
 BSP_INTERRUPT_VECTOR_COUNT is one of the two things which cannot follow the
