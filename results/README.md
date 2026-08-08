@@ -11,22 +11,21 @@ Each row is a full testsuite run against a different build, in chronological ord
 |---|---|---:|---:|---:|
 | 1 | TLS model + `-T linkcmds` | 488 | 20 | 534 |
 | 2 | + `lseek` UB fix (F5) | 501 | 15 | 542 |
-| final | + compiler-rt, libdl, constructors (F11), `.eh_frame` (F12) | **508** | **10** | 542 of 673* |
+| final | + compiler-rt, libdl, constructors (F11), `.eh_frame` (F12) | **508** | **8** | 542 |
 | — | **GCC baseline** | 517 | 0 | 543 |
 
-\* The final run was still working through its last chunk when these numbers were captured;
-`clang-riscv-mbv-final.txt` holds the 542 results completed at that point. The counts are
-representative but not the complete run.
+The final run also records 24 XFAIL and 2 XFAIL-KNOWN. `dl06` and `ttest01` failed on the first
+pass and **passed on retry**, so they are flaky under parallel QEMU load rather than broken.
 
 **The test *count* matters as much as the pass count.** Run 1 ran 534 tests; the final build
 produces 673, because C++ tests that previously failed to *link* now build. So `iostream`,
 `rcxx01` and `exit03` appearing as failures partway through this work were newly built, not
 newly broken.
 
-## Remaining failures (10)
+## Remaining failures (8)
 
 ```
-dl06 dl08 dl09  psx13  sptls01 sptls02  termios02  ttest01
+dl08 dl09  psx13  sptls01 sptls02  termios02
 ts-validation-intr  ts-validation-no-clock-0
 ```
 
@@ -37,11 +36,20 @@ GCC passes all of these, so each is a Clang-specific difference. Two are diagnos
 - **`sptls02`** is a C++ `thread_local` with a dynamic initialiser, which needs the per-thread
   `__cxa_thread_atexit` path — separate from the global constructors fixed in F11.
 
-`dl06` needs `_tls_rand48_add`; notably the **GCC** symbol table does not contain it either, so
-this is a difference in what the Clang-built `.rap` module references, not a symbol-table gap.
+Two more are localised to an exact assertion:
 
-`dl08`, `dl09`, `psx13`, `termios02`, `ts-validation-*` have had no analysis. `ttest01` was
-XFAIL-KNOWN in earlier runs.
+- **`psx13`** — `futimens( fd, NULL )` returns non-zero where 0 is required
+  (`psxtests/psx13/test.c:725`).
+- **`termios02`** — `ctermid( term_name )` must return the caller's buffer, and does not
+  (`libtests/termios02/init.c:157`). Worth noting what this is *not*: newlib does not define
+  `ctermid` at all, so both toolchains link RTEMS's own `cpukit/libcsupport/src/ctermid.c`, whose
+  source plainly ends `strcpy( s, ctermid_name ); return s;`. The two builds differ only in
+  codegen — 26 bytes under Clang versus 40 under GCC — so this is a miscompile or a subtler
+  aliasing issue rather than the wrong function being linked. Not resolved.
+
+`dl08`, `dl09` and `ts-validation-*` have had no analysis. `dl06` needs `_tls_rand48_add`;
+notably the **GCC** symbol table does not contain it either, so that is a difference in what the
+Clang-built `.rap` module references, not a symbol-table gap.
 
 ## Caveats — still not an apples-to-apples comparison
 
