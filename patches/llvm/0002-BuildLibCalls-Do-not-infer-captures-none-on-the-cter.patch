@@ -1,0 +1,70 @@
+From 887828a68f19ae571579acf0b1dfc221e674df2d Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 10:57:12 -0400
+Subject: [PATCH] [BuildLibCalls] Do not infer captures(none) on the ctermid
+ argument
+
+ctermid() was grouped with clearerr() and closedir() and so had
+setDoesNotCapture(F, 0) applied to its pointer argument. That is right for
+the other two, neither of which returns its argument, but POSIX specifies
+that when the argument is non-null ctermid() writes the terminal pathname
+into the caller's buffer and returns that same pointer. The argument
+therefore escapes through the return value.
+
+With captures(none) inferred, a caller comparing the result against the
+buffer it passed in folds to false:
+
+  char buf[16];
+  char *p = ctermid(buf);
+  return p == buf;      /* must be 1, compiled to 0 */
+
+This is target independent - it reproduces on riscv32, riscv64, x86_64,
+aarch64 and microblazeel - and miscompiles conforming code against any
+POSIX libc. It was found through an RTEMS testsuite failure in termios02,
+which asserts exactly that equality.
+
+ctermid() keeps noundef and nounwind; only the argument attribute is
+dropped. The other library functions that return a pointer argument
+(realpath, fgets, stpcpy, strtok, gets) already mark the correct argument.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ llvm/lib/Transforms/Utils/BuildLibCalls.cpp         | 7 +++++++
+ llvm/test/Transforms/InferFunctionAttrs/annotate.ll | 3 ++-
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/llvm/lib/Transforms/Utils/BuildLibCalls.cpp b/llvm/lib/Transforms/Utils/BuildLibCalls.cpp
+index 3d6921b8f..2db9228a0 100644
+--- a/llvm/lib/Transforms/Utils/BuildLibCalls.cpp
++++ b/llvm/lib/Transforms/Utils/BuildLibCalls.cpp
+@@ -766,6 +766,13 @@ bool llvm::inferNonMandatoryLibFuncAttrs(Function &F,
+     Changed |= setOnlyReadsMemory(F, 0);
+     break;
+   case LibFunc_ctermid:
++    // POSIX: when the argument is non-null, ctermid() writes the pathname into
++    // the caller's buffer and *returns that same pointer*. The argument
++    // therefore escapes through the return value and must not be marked
++    // captures(none).
++    Changed |= setRetAndArgsNoUndef(F);
++    Changed |= setDoesNotThrow(F);
++    break;
+   case LibFunc_clearerr:
+   case LibFunc_closedir:
+     Changed |= setRetAndArgsNoUndef(F);
+diff --git a/llvm/test/Transforms/InferFunctionAttrs/annotate.ll b/llvm/test/Transforms/InferFunctionAttrs/annotate.ll
+index 44b76640c..e56ddb9ca 100644
+--- a/llvm/test/Transforms/InferFunctionAttrs/annotate.ll
++++ b/llvm/test/Transforms/InferFunctionAttrs/annotate.ll
+@@ -357,7 +357,8 @@ declare x86_fp80 @coshl(x86_fp80)
+ ; CHECK: declare x86_fp80 @cosl(x86_fp80) [[ERRNOMEMONLY_NOFREE_NOSYNC_NOUNWIND_WILLRETURN]]
+ declare x86_fp80 @cosl(x86_fp80)
+ 
+-; CHECK: declare noundef ptr @ctermid(ptr noundef captures(none)) [[NOFREE_NOUNWIND]]
++; ctermid() returns its argument, so the pointer escapes and must not get captures(none).
++; CHECK: declare noundef ptr @ctermid(ptr noundef) [[NOFREE_NOUNWIND]]
+ declare ptr @ctermid(ptr)
+ 
+ ; CHECK: declare double @exp(double) [[ERRNOMEMONLY_NOFREE_NOSYNC_NOUNWIND_WILLRETURN]]
+-- 
+2.39.5 (Apple Git-154)
+

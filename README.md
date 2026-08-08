@@ -13,11 +13,13 @@ work needed to do the equivalent in LLVM/Clang.
 | [04](04-llvm-gap-analysis.md) | **What it would take to support RTEMS in LLVM** — the gap, work items, sizes |
 | [05](05-clang-riscv-bringup.md) | **Building RTEMS for RISC-V with Clang** — the experiment, and the twelve things that broke |
 | [06](06-libdl-and-lld.md) | **Getting the `dl` tests working** — a TLS model mismatch, and where lld and GNU ld disagree |
+| [07](07-reaching-gcc-parity.md) | **Reaching parity with GCC** — the last eight failures, and why six of them were not compiler bugs |
 | [BUGS.md](BUGS.md) | **Every bug found — fixed, worked around, and still open** |
-| [`patches/`](patches/) | The fixes: one Clang, three RTEMS |
+| [`patches/`](patches/) | The fixes: three LLVM/lld, ten RTEMS, one rtems-tools |
 | [`repro/`](repro/) | The `config.ini` carrying the remaining workarounds |
 | [`results/`](results/) | Raw QEMU testsuite output |
 | [`evidence/`](evidence/) | Commands run and their raw output |
+| [`tools/`](tools/) | `run-all.sh`, the identical-treatment test runner the parity claim rests on |
 
 ## The findings, in short
 
@@ -59,8 +61,8 @@ That is the macOS host compiler being handed an ARM object.
 `--rtems-compiler=clang`; `spec/build/cpukit/optclang.yml` sets `CC=clang`, `AR=llvm-ar` and a
 correct `--target=` triple. Two architecture families (riscv, sparc/leon3) have Clang ABI flag
 sets. What the Clang path lacks is the `-qrtems` equivalent — and, notably, `RTEMSTargetInfo` is
-wired up for ARM, MIPS, PowerPC and SPARC but **not RISC-V**, which is the architecture RTEMS's
-Clang scaffolding most targets.
+wired up for ARM, MIPS, PowerPC, SPARC and x86-32 but **not RISC-V**, which is the architecture
+RTEMS's Clang scaffolding most targets.
 
 **The single most load-bearing piece of work is one file**: a
 `clang/lib/Driver/ToolChains/RTEMS.cpp` replicating `-qrtems`. Comparable ToolChains run 289
@@ -112,6 +114,49 @@ A cautionary note is recorded there too: at one stage 702 of 721 executables lin
 were **all unbootable**, because nothing passed `-T linkcmds` and lld had used its default layout.
 A clean link is not evidence of a working image.
 
+## And then it matched GCC
+
+[07](07-reaching-gcc-parity.md) closes the last eight failures. On the same 674 tests, run through
+the same harness, **both compilers now produce the same verdict on every test** — `diff` of the two
+result files is empty.
+
+| | PASS | XFAIL | SKIP | FAIL |
+|---|---:|---:|---:|---:|
+| GCC | 633 | 25 | 9 | 7 |
+| Clang | 633 | 25 | 9 | 7 |
+
+The seven remaining failures fail identically under GCC. **Parity means matching, not zero.**
+
+The breakdown of the eight root causes is the actual finding, and it is not what I expected going
+in. **Two were compiler bugs. Six were not.**
+
+- **Clang miscompiles `ctermid`.** `BuildLibCalls.cpp` infers `captures(none)` on an argument that
+  POSIX says is returned, so a caller comparing the result against its own buffer folds to false.
+  Target-independent — riscv32, riscv64, x86_64, aarch64, microblazeel — and wrong against any
+  POSIX libc. Nothing to do with RTEMS.
+- **lld does not propagate TLS alignment under a linker script.** GNU ld aligns the first TLS
+  output section to the maximum alignment of all of them, in `_bfd_elf_tls_setup()`; RTEMS names
+  that function in a source comment because it depends on the behaviour. lld does the equivalent
+  only when it computes program headers itself.
+- **RTEMS's dynamic loader passes a section index where a symbol type belongs**, so any deferred
+  relocation against a symbol in ELF section index 3 is silently skipped and reported as applied.
+  Clang put the symbol at index 3; GCC put it at 5. **A live latent bug for GCC users.**
+- **`rtems-syms` treated undefined symbols as definitions**, because GNU ld drops unresolved weak
+  undefined symbols from a linked image and lld keeps them. Root cause was in `rtemstoolkit`, one
+  level below where it was first reported.
+- **`ALIGN(8)` was substituted for `ALIGN_WITH_INPUT`** in the 2020 Clang scaffolding. The two are
+  not equivalent — the latter imposes no alignment at all — and the substitution corrupts the TLS
+  block size.
+- **Three RTEMS tests depended on things they should not**: an uninitialized `struct stat` that
+  GCC's stack layout happened to make benign, a constructor-ordering counter a compiler is free to
+  evaluate at translation time, and a local register variable read outside an asm operand.
+
+Two of the diagnoses recorded in [06](06-libdl-and-lld.md) turned out to be wrong and are corrected
+in [BUGS.md](BUGS.md) with the original reasoning left in place. One failure was also
+self-inflicted: a workaround that deleted rows from a symbol table silently renumbered the
+positional TLS indices that the same file declares, manufacturing a failure that looked exactly
+like a compiler bug.
+
 ## The asymmetry
 
 GCC's RTEMS support is **large in aggregate but tiny per decision**: a few hundred lines of specs
@@ -132,11 +177,19 @@ existing GCC build tree was never touched, and a GCC control build was run in th
 to prove the setup before changing compilers.
 
 Caveats that matter: the Tier A/B size estimates in [04](04-llvm-gap-analysis.md) remain
-judgement, not measurement — no ToolChain has been written. The bring-up in
-[05](05-clang-riscv-bringup.md) still uses GCC's newlib, libgcc and libstdc++, so it demonstrates
-that *Clang can compile and link RTEMS*, not that LLVM's own runtime stack works. And its
-testsuite numbers carry twelve workarounds, so they are not a fair comparison against the GCC
-baseline.
+judgement, not measurement — no ToolChain has been written. The bring-up still uses GCC's newlib,
+libgcc, libgcc_eh and libstdc++ throughout, so it demonstrates that *Clang can compile and link
+RTEMS*, not that LLVM's own runtime stack works — the only LLVM runtime component in the picture is
+`libclang_rt.builtins.a`.
+
+The parity result in [07](07-reaching-gcc-parity.md) carries its own caveats, stated there in
+full: the harness is ours rather than RTEMS's own `rtems-test`, the seven shared failures are
+assumed to be timeouts rather than explained, the 25 XFAILs are unaudited, and everything
+`-qrtems` does is still hand-rolled in [`repro/config.ini`](repro/config.ini) with machine-specific
+absolute paths. The earlier testsuite numbers in [05](05-clang-riscv-bringup.md) and
+[06](06-libdl-and-lld.md) were **not** a fair comparison against GCC — different denominators and
+a set of stale test binaries that were not being rebuilt — which is why [07](07-reaching-gcc-parity.md)
+starts by redoing the measurement rather than by fixing anything.
 
 One correction is recorded rather than quietly fixed: the first draft of
 [04](04-llvm-gap-analysis.md) generalised from ARM and claimed Clang hands RTEMS links to the host

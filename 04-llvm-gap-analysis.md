@@ -43,16 +43,23 @@ protected:
 That is why `clang --target=arm-unknown-rtems7 -dM -E -` really does emit `#define __rtems__ 1`.
 **This is not a gap** — I checked before assuming it was.
 
-But it is wired up for only **9 sites in `Targets.cpp`**, covering roughly five architectures:
+But it is wired up for only **10 sites in `Targets.cpp`** — lines 242, 276, 295, 314, 336, 352,
+384, 520, 531 and 626 — covering roughly six architectures:
 
 ```
   RTEMSTargetInfo<ARMleTargetInfo>      RTEMSTargetInfo<PPC32TargetInfo>
   RTEMSTargetInfo<ARMbeTargetInfo>      RTEMSTargetInfo<SparcV8TargetInfo>
   RTEMSTargetInfo<MipsTargetInfo> (×4)  RTEMSTargetInfo<SparcV8elTargetInfo>
+  RTEMSX86_32TargetInfo
 ```
 
-**No RISC-V. No AArch64. No x86.** RISC-V is precisely the architecture RTEMS's own Clang
+**No RISC-V. No AArch64. No x86_64.** RISC-V is precisely the architecture RTEMS's own Clang
 scaffolding targets.
+
+> **Correction.** Earlier revisions of this document said "9 sites" and "No x86". Both were wrong:
+> the count is 10, and x86-32 *is* covered, by `RTEMSX86_32TargetInfo` in
+> `clang/lib/Basic/Targets/X86.h:716-732`. Only x86_64 is missing. The error stood for several
+> revisions because the claim was re-asserted from the summary rather than re-measured.
 
 **Now verified.** I built Clang with the RISC-V backend enabled and measured it:
 

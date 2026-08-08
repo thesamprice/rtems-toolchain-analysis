@@ -1,0 +1,37 @@
+From ca7799841f06da429e50a236d7e0b5c5091e99e4 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 10:58:02 -0400
+Subject: [PATCH] build: Do not force an 8 byte output section alignment for
+ clang
+
+LINKCMDS_ALIGN_DIRECTIVE stands in for ALIGN_WITH_INPUT, which lld cannot
+parse.  The clang option spec substituted ALIGN(8), but ALIGN_WITH_INPUT
+only ties the alignment of an output section's LMA to that of its VMA, it
+does not impose an alignment.  The faithful substitute is nothing at all.
+
+Forcing ALIGN(8) changes the meaning of the TLS block.  With .tbss aligned
+to 8 rather than to its natural alignment, _TLS_Size is computed as
+_TLS_BSS_end - _TLS_Data_begin over the padding, so a single one-byte
+thread-local reports a size of 8.  sptls01 checks for exactly this.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ spec/build/bsps/optclang.yml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/spec/build/bsps/optclang.yml b/spec/build/bsps/optclang.yml
+index f67b004a37..60ecca89eb 100644
+--- a/spec/build/bsps/optclang.yml
++++ b/spec/build/bsps/optclang.yml
+@@ -2,7 +2,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0 OR BSD-2-Clause
+ actions:
+ - set-value: INPUT
+ - env-assign: LINKCMDS_START_DIRECTIVE
+-- set-value: ALIGN(8)
++- set-value: ''
+ - env-assign: LINKCMDS_ALIGN_DIRECTIVE
+ build-type: option
+ copyrights:
+-- 
+2.39.5 (Apple Git-154)
+

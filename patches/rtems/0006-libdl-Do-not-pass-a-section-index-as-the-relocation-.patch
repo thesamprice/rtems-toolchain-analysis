@@ -1,0 +1,75 @@
+From ed992b4afdfaa2e0766522fbb68e964432ad32c1 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 10:57:50 -0400
+Subject: [PATCH] libdl: Do not pass a section index as the relocation syminfo
+
+The syminfo argument of the architecture relocation handlers is the ELF
+st_info byte of the referenced symbol.  The handlers compare it against
+STT_SECTION to skip relocations against section symbols; the RISC-V and
+MIPS backends do so today.
+
+rtems_rtl_obj_relocate_unresolved() passed sym->data instead, which holds
+the index of the section the symbol was defined in (see the assignment in
+rtems_rtl_elf_symbols_load(), and the uses as a section index in
+rtems_rtl_elf_symbols_locate()).  STT_SECTION is 3, so every deferred
+relocation against a symbol that happened to be defined in section index 3
+was silently skipped and reported as successfully applied.
+
+The direct relocation path is unaffected: it passes sym->st_info.
+
+This shows up in dl08 and dl09 on riscv/mbv when the object files are
+built by clang, whose section ordering puts rtems_main_o2 in section index
+3.  The cross-object reference is deferred until the defining object
+loads, is then never applied, and the module calls through a null pointer.
+The same objects built by GCC put the symbol in section index 5 and so
+avoid the collision by luck.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ cpukit/libdl/rtl-elf.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/cpukit/libdl/rtl-elf.c b/cpukit/libdl/rtl-elf.c
+index f582197353..04c24d7679 100644
+--- a/cpukit/libdl/rtl-elf.c
++++ b/cpukit/libdl/rtl-elf.c
+@@ -543,6 +543,18 @@ static bool rtems_rtl_elf_relocs_locator(rtems_rtl_obj* obj, int fd,
+                                        rtems_rtl_elf_reloc_relocator, data);
+ }
+ 
++/*
++ * The syminfo argument of the architecture relocation handlers is the ELF
++ * st_info byte of the referenced symbol; the handlers use it to recognise a
++ * section symbol.  A rtems_rtl_obj_sym does not carry st_info - its data field
++ * holds the section index the symbol was defined in - so it must not be passed
++ * here:  a symbol defined in section index 3 would be taken for an
++ * STT_SECTION symbol and its relocation silently skipped.  A symbol on the
++ * unresolved list is always a named symbol resolved from another object or the
++ * base image and never a section symbol, so report no type.
++ */
++#define RTEMS_RTL_UNRESOLVED_SYMINFO STT_NOTYPE
++
+ bool rtems_rtl_obj_relocate_unresolved(rtems_rtl_unresolv_reloc* reloc,
+                                        rtems_rtl_obj_sym* sym) {
+   rtems_rtl_obj_sect* sect;
+@@ -571,7 +583,7 @@ bool rtems_rtl_obj_relocate_unresolved(rtems_rtl_unresolv_reloc* reloc,
+              (uintmax_t)rela.r_offset, (int)rela.r_addend);
+     }
+     rs = rtems_rtl_elf_relocate_rela(reloc->obj, &rela, sect, sym->name,
+-                                     sym->data, symvalue);
++                                     RTEMS_RTL_UNRESOLVED_SYMINFO, symvalue);
+     if (rs != rtems_rtl_elf_rel_no_error) {
+       return false;
+     }
+@@ -584,7 +596,7 @@ bool rtems_rtl_obj_relocate_unresolved(rtems_rtl_unresolv_reloc* reloc,
+              (int)ELF_R_TYPE(rel.r_info), (uintmax_t)rel.r_offset);
+     }
+     rs = rtems_rtl_elf_relocate_rel(reloc->obj, &rel, sect, sym->name,
+-                                    sym->data, symvalue);
++                                    RTEMS_RTL_UNRESOLVED_SYMINFO, symvalue);
+     if (rs != rtems_rtl_elf_rel_no_error) {
+       return false;
+     }
+-- 
+2.39.5 (Apple Git-154)
+

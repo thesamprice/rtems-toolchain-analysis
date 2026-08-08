@@ -1,0 +1,68 @@
+From 280c284ebc9f0800bc07ee4376de3ae2647668d0 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 11:16:43 -0400
+Subject: [PATCH] rtemstoolkit: Never treat an undefined symbol as a definition
+
+file::get_symbols() routed a symbol to the unresolved set only when it was
+STT_NOTYPE, STB_GLOBAL and SHN_UNDEF.  Anything else undefined fell through
+to the second test, which looks only at the type and the binding, so a weak
+undefined symbol - or an undefined global that carries a type - was
+collected as a definition and handed to the tools as one.
+
+GNU ld drops unresolved weak undefined symbols from the symbol table of a
+fully linked image, so this stayed hidden.  lld keeps them.  Linking an
+RTEMS image with lld therefore left entries such as
+_ITM_registerTMCloneTable and _ZGTtnaj from libstdc++ in .symtab, rtems-syms
+harvested them into the base image global symbol table, and every libdl
+test failed to link because the generated table referenced symbols nothing
+defines.
+
+Test only the binding and the section index, so an undefined external is
+unresolved whatever its type.  The binding is still checked because the ELF
+null symbol is local and undefined and must not be picked up: without that
+rtems-ld reports "symbol not found: " for the empty name.
+
+Output for a GNU ld linked image is unchanged, byte for byte.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ rtemstoolkit/rld-elf.cpp | 20 +++++++++++++-------
+ 1 file changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/rtemstoolkit/rld-elf.cpp b/rtemstoolkit/rld-elf.cpp
+index b8b5688..2e3a237 100644
+--- a/rtemstoolkit/rld-elf.cpp
++++ b/rtemstoolkit/rld-elf.cpp
+@@ -860,16 +860,22 @@ namespace rld
+         int sbind = sym.binding ();
+ 
+         /*
+-         * If wanting unresolved symbols and the type is no-type and the
+-         * section is undefined, or, the type is no-type or object or function
+-         * and the bind is local and we want local symbols, or the bind is weak
+-         * and we want weak symbols, or the bind is global and we want global
+-         * symbols then add the filtered symbols container.
++         * An external symbol with an undefined section index defines nothing,
++         * whatever its type, so it is only ever an unresolved symbol.  This
++         * covers a weak undefined symbol too: a linker may keep one in the
++         * symbol table of a fully linked image (lld does, GNU ld does not),
++         * and taking it for a definition makes the tools emit a reference to a
++         * symbol nothing defines.  The binding is checked so that the ELF null
++         * symbol, which is local and undefined, is not mistaken for one.
++         *
++         * Otherwise, if the type is no-type or object or function and the bind
++         * is local and we want local symbols, or the bind is weak and we want
++         * weak symbols, or the bind is global and we want global symbols then
++         * add to the filtered symbols container.
+          */
+         bool add = false;
+ 
+-        if ((stype == STT_NOTYPE) &&
+-            (sbind == STB_GLOBAL) &&
++        if (((sbind == STB_GLOBAL) || (sbind == STB_WEAK)) &&
+             (sym.section_index () == SHN_UNDEF))
+         {
+           if (unresolved)
+-- 
+2.39.5 (Apple Git-154)
+

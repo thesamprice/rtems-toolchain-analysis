@@ -1,0 +1,44 @@
+From 3db06090a790d0d56abfcc0680a6866bebc85d42 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 10:58:13 -0400
+Subject: [PATCH] validation/tc-score-isr: Read the RISC-V interrupted stack
+ pointer via asm
+
+The RISC-V wrapper obtained the interrupted stack pointer from a local
+register variable bound to s1.  clang honours a local register variable
+only where it appears as an asm operand and otherwise treats reading it as
+undefined; it deleted the whole conditional, leaving the wrapper as a bare
+tail jump.  interrupted_stack_at_multitasking_start then stayed zero and
+the test failed at tc-score-isr.c:274.
+
+Name the register in the asm template instead, which both compilers honour.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ testsuites/validation/tc-score-isr.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/testsuites/validation/tc-score-isr.c b/testsuites/validation/tc-score-isr.c
+index b178541e72..4cb8680b49 100644
+--- a/testsuites/validation/tc-score-isr.c
++++ b/testsuites/validation/tc-score-isr.c
+@@ -178,7 +178,15 @@ void __wrap__RISCV_Interrupt_dispatch(
+   Per_CPU_Control *cpu_self
+ )
+ {
+-  register uintptr_t sp __asm__( "s1" );
++  uintptr_t sp;
++
++  /*
++   * The interrupted stack pointer is in s1 on entry.  Name the register in the
++   * asm template instead of using a local register variable: clang honours a
++   * local register variable only where it appears as an asm operand, and
++   * otherwise treats reading it as undefined and deletes this entire block.
++   */
++  __asm__ ( "mv %0, s1" : "=r" ( sp ) );
+ 
+   if ( interrupted_stack_at_multitasking_start == 0 ) {
+     interrupted_stack_at_multitasking_start = sp;
+-- 
+2.39.5 (Apple Git-154)
+

@@ -1,0 +1,109 @@
+From e95ae43be424a70b97149d737fb9494c8fe4ba66 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 10:57:23 -0400
+Subject: [PATCH] [ELF] Align the first TLS output section to the maximum TLS
+ alignment
+
+A TLS variable's alignment is relative to the start of the TLS block, so
+the first TLS output section has to be aligned to the maximum alignment of
+all of them. Otherwise a variable in a later, more strictly aligned TLS
+section lands at a block-relative offset that does not satisfy its
+alignment. GNU ld does this in _bfd_elf_tls_setup().
+
+Without a SECTIONS command we already get the same effect by aligning the
+PT_LOAD that starts PT_TLS, so the layout was only wrong when a linker
+script laid the TLS sections out. An RTEMS RISC-V image with a one-byte
+.tdata and a 4096-aligned .tbss put .tdata at a 256-aligned address and
+.tbss at block offset 0x1b00, so a 512-aligned thread-local ended up
+256-aligned at run time.
+
+Apply the propagation for the linker script case only, which leaves
+non-script output byte for byte unchanged.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ lld/ELF/LinkerScript.cpp              | 26 ++++++++++++++++++++
+ lld/test/ELF/linkerscript/tls-align.s | 34 +++++++++++++++++++++++++++
+ 2 files changed, 60 insertions(+)
+ create mode 100644 lld/test/ELF/linkerscript/tls-align.s
+
+diff --git a/lld/ELF/LinkerScript.cpp b/lld/ELF/LinkerScript.cpp
+index 0c1652b7e..d7699b223 100644
+--- a/lld/ELF/LinkerScript.cpp
++++ b/lld/ELF/LinkerScript.cpp
+@@ -1446,6 +1446,32 @@ void LinkerScript::adjustOutputSections() {
+   // We instead remove trivially empty sections. The bfd linker seems even
+   // more aggressive at removing them.
+   llvm::erase_if(sectionCommands, [&](SectionCommand *cmd) { return !cmd; });
++
++  // A TLS variable's alignment is relative to the start of the TLS block, not
++  // to its own output section, so the first TLS output section must be aligned
++  // to the maximum alignment of every TLS output section. Otherwise a variable
++  // in a later, more strictly aligned TLS section (typically .tbss) lands at a
++  // block-relative offset that does not satisfy its alignment. GNU ld does this
++  // in _bfd_elf_tls_setup(); without a SECTIONS command we get the same effect
++  // by aligning the PT_LOAD that starts PT_TLS (see Writer::assignAddresses),
++  // so this is only needed, and only applied, for the linker script case.
++  if (!hasSectionsCommand)
++    return;
++  OutputSection *firstTls = nullptr;
++  uint32_t maxTlsAlign = 1;
++  for (SectionCommand *cmd : sectionCommands) {
++    auto *osd = dyn_cast<OutputDesc>(cmd);
++    if (!osd)
++      continue;
++    OutputSection *sec = &osd->osec;
++    if (!sec->isLive() || !(sec->flags & SHF_TLS) || !(sec->flags & SHF_ALLOC))
++      continue;
++    if (!firstTls)
++      firstTls = sec;
++    maxTlsAlign = std::max(maxTlsAlign, sec->addralign);
++  }
++  if (firstTls)
++    firstTls->addralign = maxTlsAlign;
+ }
+ 
+ void LinkerScript::adjustSectionsAfterSorting() {
+diff --git a/lld/test/ELF/linkerscript/tls-align.s b/lld/test/ELF/linkerscript/tls-align.s
+new file mode 100644
+index 000000000..d3161f3b9
+--- /dev/null
++++ b/lld/test/ELF/linkerscript/tls-align.s
+@@ -0,0 +1,34 @@
++# REQUIRES: x86
++## A TLS variable's alignment is relative to the start of the TLS block. When a
++## SECTIONS command lays out the TLS sections, the first one still has to be
++## aligned to the maximum alignment of all of them, or a variable in a later,
++## more strictly aligned TLS section gets a block-relative offset that does not
++## satisfy its alignment. GNU ld does this in _bfd_elf_tls_setup().
++
++# RUN: rm -rf %t && split-file %s %t && cd %t
++# RUN: llvm-mc -filetype=obj -triple=x86_64 a.s -o a.o
++# RUN: ld.lld -T a.lds a.o -o a
++# RUN: llvm-readelf -S -l a | FileCheck %s
++
++## .tdata only needs an alignment of 1, but .tbss needs 256, so .tdata is
++## aligned to 256 and .tbss lands at a block-relative offset of 0x100.
++# CHECK:      Name   Type     Address          Off    Size   ES Flg Lk Inf Al
++# CHECK:      .tdata PROGBITS 0000000000000100 001100 000001 00 WAT 0    0 256
++# CHECK-NEXT: .tbss  NOBITS   0000000000000200 001101 000008 00 WAT 0    0 256
++
++#--- a.s
++.section .tdata,"awT",@progbits
++.byte 0
++
++.section .tbss,"awT",@nobits
++.p2align 8
++a:
++.quad 0
++
++#--- a.lds
++SECTIONS {
++  . = 0x100;
++  .tdata : { *(.tdata) }
++  .tbss : { *(.tbss) }
++  .text : { *(.text) }
++}
+-- 
+2.39.5 (Apple Git-154)
+

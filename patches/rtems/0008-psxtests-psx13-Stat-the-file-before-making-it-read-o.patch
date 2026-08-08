@@ -1,0 +1,42 @@
+From b1528ffe16d39078678b966325cee17de482e644 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 10:58:02 -0400
+Subject: [PATCH] psxtests/psx13: Stat the file before making it read-only
+
+FutimensTest() restores the file mode with chmod( "testfile1.tst",
+fstat.st_mode ) after the read-only test case, but nothing in that
+function ever fills fstat in.  The restoring chmod() therefore applies an
+uninitialised mode.  UtimesTest() and UtimensatTest() do the stat() first;
+FutimensTest() was missing it.
+
+When the leftover stack contents happen to carry write permission the test
+passes, which is what happens with GCC.  With clang the file stays
+read-only and the following futimens( fd, NULL ) case fails with EACCES.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ testsuites/psxtests/psx13/test.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/testsuites/psxtests/psx13/test.c b/testsuites/psxtests/psx13/test.c
+index 4dcd4143d6..632f525fe5 100644
+--- a/testsuites/psxtests/psx13/test.c
++++ b/testsuites/psxtests/psx13/test.c
+@@ -652,6 +652,14 @@ static void FutimensTest( void )
+ 
+   /* Case: File is read-only and time's tv_nsec members are UTIME_NOW */
+ 
++  /*
++   * Remember the original mode so that it can be restored below.  Without
++   * this, fstat is read uninitialized and the restoring chmod() leaves the
++   * file without write permission, so the later successful test cases fail.
++   */
++  rv = stat( "testfile1.tst", &fstat );
++  rtems_test_assert( rv == 0 );
++
+   /* Change file to be read-only */
+   rv = chmod( "testfile1.tst", 06444 );
+   rtems_test_assert( rv == 0 );
+-- 
+2.39.5 (Apple Git-154)
+

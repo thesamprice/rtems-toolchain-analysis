@@ -1,0 +1,46 @@
+From 32df81744579acdf74a282cc8bc9590e3e4ba039 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 10:58:13 -0400
+Subject: [PATCH] validation/tc-preinit-array: Make the ordering counter
+ volatile
+
+The test records the order in which the .preinit_array and .init_array
+constructors ran by incrementing a shared counter.  A compiler is free to
+evaluate the .init_array constructor at translation time and commit its
+effect to the static initializer, and clang's GlobalOpt does exactly that
+at -O2.  The .preinit_array constructor then observes the value the
+.init_array constructor left behind, and the ordering the test validates
+becomes unobservable: constructor_counter reads 2 and
+normal_constructor_counter reads 1.
+
+Making the counter volatile keeps the sequence a run time property.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ testsuites/validation/tc-preinit-array.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/testsuites/validation/tc-preinit-array.c b/testsuites/validation/tc-preinit-array.c
+index 78606b80ba..7e706a77dd 100644
+--- a/testsuites/validation/tc-preinit-array.c
++++ b/testsuites/validation/tc-preinit-array.c
+@@ -84,7 +84,15 @@ static bool test_case_executed;
+ 
+ static bool constructor_test_case_executed;
+ 
+-static uint32_t counter;
++/*
++ * This counter records the runtime order in which the .preinit_array and
++ * .init_array constructors ran.  It must be volatile: otherwise a compiler may
++ * evaluate the .init_array constructor at translation time and commit its
++ * effect to the static initializer (clang's GlobalOpt does this at -O2).  The
++ * .preinit_array constructor then observes the post-constructor value and the
++ * ordering this test validates becomes unobservable.
++ */
++static volatile uint32_t counter;
+ 
+ static uint32_t normal_constructor_counter;
+ 
+-- 
+2.39.5 (Apple Git-154)
+

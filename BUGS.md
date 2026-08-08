@@ -213,6 +213,116 @@ Still a `config.ini` workaround rather than a patch, because the right home for 
 ToolChain. Note this is the second time `-nostartfiles` — one blunt flag standing in for one line
 of a GCC spec — has caused a silent runtime failure.
 
+### F13 — Clang infers `captures(none)` on the `ctermid` argument *(LLVM)*
+
+Closes **O4/`termios02`**, which was left as "evidence strong, cause not established". The cause is
+now established and the reduced test case O4 asked for exists.
+
+`BuildLibCalls.cpp` grouped `ctermid` with `clearerr` and `closedir` and applied
+`setDoesNotCapture(F, 0)` to all three. POSIX specifies that `ctermid(s)` returns `s`, so the
+argument escapes through the return value and any comparison between the two folds to false.
+
+**Target-independent**: reproduces on riscv32, riscv64, x86_64, aarch64 and microblazeel, and
+miscompiles conforming code against any POSIX libc. Full reduction and controls in
+[07](07-reaching-gcc-parity.md).
+
+- `thesamprice/llvm-project` branch **`rtems/riscv-support`**
+- [`patches/llvm/0002-...`](patches/llvm/) — upstreamable to LLVM as-is.
+
+### F14 — lld does not propagate TLS alignment under a linker script *(lld)*
+
+Closes **O4/`sptls02`** and **corrects its diagnosis**, which blamed a missing
+`__cxa_thread_atexit` path. That was wrong: the C++ `thread_local` machinery works, the TLS block
+was misaligned underneath it.
+
+A thread-local's alignment is relative to the start of the TLS block. GNU ld aligns the first TLS
+output section to the maximum alignment of all of them, in `_bfd_elf_tls_setup()` — RTEMS names
+that function in a comment in `tlsallocsize.c` because it depends on the behaviour. lld does the
+equivalent only when it computes program headers itself; under a `SECTIONS` command nothing
+supplies it, and a 512-aligned thread-local landed at block offset `0x1b00`.
+
+Gated to the linker-script case so non-script output is byte-for-byte unchanged; lld ELF suite
+2038/2038 with a new regression test. The ungated form is arguably more correct — see
+[07](07-reaching-gcc-parity.md).
+
+- [`patches/llvm/0003-...`](patches/llvm/)
+
+### F15 — libdl passes a section index where a symbol type belongs *(RTEMS)*
+
+Closes **O4/`dl08`, `dl09`**, listed there as "not investigated".
+
+`rtl-elf.c` stores `osym->data = symbol.st_shndx` and legitimately uses it as a section index. But
+`rtems_rtl_obj_relocate_unresolved()` passes that field as the backend's `syminfo` argument, which
+every backend treats as the ELF `st_info` byte and compares against `STT_SECTION`.
+
+`STT_SECTION` is 3, so **any deferred relocation against a symbol defined in ELF section index 3
+is silently skipped and reported as applied**. Clang put `rtems_main_o2` at index 3; GCC put it at
+5. The direct relocation path passes `sym->st_info` and is correct.
+
+**Compiler-independent and latent for GCC users.** The most valuable item here to report upstream.
+
+- [`patches/rtems/0006-...`](patches/rtems/)
+
+### F16 — `rtems-syms` treats undefined symbols as definitions *(rtems-tools)*
+
+Closes **O3**, and confirms O3's preferred fix ("skip symbols with `st_shndx == SHN_UNDEF`") was
+the right one. rtems-tools is now checked out, so it is patched rather than reported.
+
+The root cause is one level below where O3 placed it: `rtemstoolkit/rld-elf.cpp`,
+`file::get_symbols()` classified a symbol as unresolved only when it was `STT_NOTYPE` **and**
+`STB_GLOBAL` **and** `SHN_UNDEF`, so an undefined *weak* symbol was collected as a definition.
+Fixing the toolkit rather than the tool applies the correction to every consumer and keeps
+`rtems-syms`'s positional `RTEMS_TLS_INDEX_*` constants consistent by construction.
+
+Requires checking the binding as well as the section index: keying on `SHN_UNDEF` alone sweeps in
+the ELF null symbol and `rtems-ld` fails with `symbol not found: ` and an empty name. On a GNU ld
+linked image the fixed tool's output is byte-for-byte identical to the old one.
+
+Wired into the RSB recipe so a toolchain rebuild carries it — see [07](07-reaching-gcc-parity.md).
+
+- `thesamprice/rtems-tools` branch **`fix/undefined-symbols-are-not-definitions`**
+- [`patches/rtems-tools/0001-...`](patches/rtems-tools/)
+
+### F17 — `ALIGN(8)` substituted for `ALIGN_WITH_INPUT` breaks the TLS block *(RTEMS)*
+
+Closes **O4/`sptls01`** and **corrects its diagnosis**, which called the test over-specified and
+"not a correctness bug in either compiler". It is a real bug, and it is in the 2020 Clang
+scaffolding.
+
+lld cannot parse `ALIGN_WITH_INPUT`, so `spec/build/bsps/optclang.yml` substitutes `ALIGN(8)`. But
+`ALIGN_WITH_INPUT` imposes no alignment — it ties an output section's LMA alignment to its VMA
+alignment. Applied to `.tdata`/`.tbss` the substitute pads the TLS block, and `_TLS_Size` comes out
+as 8 for a single one-byte thread-local. The faithful substitute is an empty value.
+
+- [`patches/rtems/0007-...`](patches/rtems/)
+
+### F18 — `psx13` reads an uninitialized `struct stat` *(RTEMS)*
+
+Closes **O4/`psx13`**, previously localised but not diagnosed.
+
+`FutimensTest()` restores the file mode with `chmod("testfile1.tst", fstat.st_mode)` but never
+`stat()`s the file; the sibling `UtimesTest()` and `UtimensatTest()` both do. With GCC the leftover
+stack contents happened to carry write permission. Compiler-independent test bug.
+
+- [`patches/rtems/0008-...`](patches/rtems/)
+
+### F19 — two validation tests depend on compiler behaviour they should not *(RTEMS)*
+
+Closes **O4/`ts-validation-no-clock-0`** and **O4/`ts-validation-intr`**, both "not investigated".
+
+`tc-preinit-array` validates that `.preinit_array` runs before `.init_array` using a shared
+counter. Clang's GlobalOpt evaluates the `.init_array` constructor at translation time at `-O2`
+and commits it to the static initializer, so the `.preinit_array` constructor observes the
+post-constructor value and the ordering becomes unobservable. Making the counter `volatile` keeps
+it a run-time property.
+
+`tc-score-isr` reads the interrupted stack pointer from a local register variable bound to `s1`.
+Clang honours those only as asm operands and deleted the whole block, leaving a bare tail jump.
+Naming the register in the asm template works on both compilers; the tied-operand form does **not**
+— clang allocates the pair elsewhere and reads garbage.
+
+- [`patches/rtems/0009-...`](patches/rtems/), [`patches/rtems/0010-...`](patches/rtems/)
+
 ---
 
 ## Open
@@ -252,6 +362,11 @@ forced into the base image), and `dl08`/`dl09`, which now get much further — t
 module and run its constructors before stopping. Their remaining problem looks unrelated to
 symbols; `%f` prints literally, suggesting newlib's float `printf` support is not linked in.
 
+> **Update.** `dl08`/`dl09` are fixed — see **F15**; the cause was the libdl relocation bug, not
+> symbols. The `%f` observation was a red herring: GCC prints `%f` literally too, because the test
+> wrappers use a reduced `printf`. `dl06` still fails, but it **fails identically under GCC**, so
+> it is no longer a Clang-specific difference and is out of scope for parity.
+
 The RTEMS-side change is on branch **`fix/clang-riscv-build-support`** @ `93cc3dbd5c`. The
 compiler-rt build is a recipe, not a patch — nothing in RTEMS or LLVM needs changing for it.
 
@@ -285,10 +400,14 @@ This matters beyond `libdl`: "Clang + GNU binutils" is Tier A of
 [04](04-llvm-gap-analysis.md) — the cheapest useful configuration — so whether it works is worth
 knowing for its own sake.
 
-### O3 — `rtems-syms` exports *undefined* symbols, breaking `dl05`
+### O3 — `rtems-syms` exports *undefined* symbols, breaking `dl05` *(now fixed, see F16)*
 
 Root-caused precisely. The fix belongs in **rtems-tools**, which is not checked out here, so it is
 reported rather than patched.
+
+> **Resolved.** rtems-tools is now checked out and patched — see **F16**. Fix 1 below, skipping
+> `SHN_UNDEF` symbols, was the correct one; it belongs one level down in `rtemstoolkit` rather
+> than in `rtems-syms` itself, so that every consumer of the toolkit gets it.
 
 `rtems-syms` emits, for every symbol it harvests from the base image:
 
@@ -373,9 +492,15 @@ it even though it does not fix this particular test. It belongs in a ToolChain, 
 tests; run 3 runs 673, because C++ tests that previously failed to link now build. They are newly
 built and failing.
 
-### O4 — Remaining failures
+### O4 — Remaining failures *(all now fixed)*
 
 Down to four, from twenty. GCC passes all of them, so each is a Clang-specific difference.
+
+> **Resolved.** All of these are closed: `sptls01` by **F17**, `sptls02` by **F14**, `termios02`
+> by **F13**, `psx13` by **F18**, `dl08`/`dl09` by **F15**, and both `ts-validation` tests by
+> **F19**. Two of the diagnoses recorded below turned out to be wrong and are corrected in those
+> entries — `sptls01` was not an over-specified test, and `sptls02` was not `__cxa_thread_atexit`.
+> The original reasoning is left in place. See [07](07-reaching-gcc-parity.md).
 
 #### `sptls01` — TLS block size, diagnosed
 
@@ -460,20 +585,27 @@ No analysis done on these two.
 
 | | count |
 |---|---:|
-| Fixed and pushed | 11 (F1–F5, F7–F12, most of O1) |
+| Fixed and pushed | 18 (F1–F5, F7–F19, and O1, O3) |
 | Worked around, needs a proper home | 1 (F6) |
 | Open, root-caused | 1 (O2) |
-| Open, self-inflicted | 1 (O3) |
-| Open | 4 tests (O4): 2 diagnosed, 2 untouched |
 | Open, hypothesis disproven | 1 (O7) |
 
-**O1 is now mostly fixed** — building compiler-rt builtins with hidden symbols disabled, plus
-forcing the helpers into the libdl base images, took the `dl` tests from 4 passing to 8. What is
-left there is `dl06` (one more symbol of the same class) and `dl08`/`dl09`, which now fail well
-past the symbol stage.
+**O4 is closed.** All eight remaining test failures are fixed — see
+[07](07-reaching-gcc-parity.md) — and the same 674 tests now produce the same verdict under both
+compilers. Two of the four diagnoses recorded under O4 were wrong (`sptls01` was a real bug in
+RTEMS's Clang scaffolding, not an over-specified test; `sptls02` was TLS block alignment, not
+`__cxa_thread_atexit`) and are corrected in F17 and F14 with the original reasoning left in place.
+
+**O3 is closed** by F16, one level deeper than it was reported: in `rtemstoolkit` rather than in
+`rtems-syms`.
 
 The highest-value remaining item is **O2**: GNU `ld` cannot link Clang's output for this target at
 all, which blocks the cheapest useful configuration in [04](04-llvm-gap-analysis.md).
 
-The single most valuable item to report upstream independent of any of this is **F5**: latent
-undefined behaviour in RTEMS's `lseek`, present regardless of compiler.
+Three items are worth reporting upstream independent of the Clang work, because each is a live
+defect for people who have never used Clang:
+
+- **F15** — libdl silently drops any deferred relocation against a symbol in ELF section index 3.
+- **F5** — undefined behaviour in RTEMS's `lseek` overflow check.
+- **F13** — Clang miscompiles any correct use of `ctermid`, on every target, against any POSIX
+  libc. Nothing to do with RTEMS; RTEMS is just where it was caught.
