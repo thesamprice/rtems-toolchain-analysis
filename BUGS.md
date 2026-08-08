@@ -398,39 +398,51 @@ than fixing in the toolchain.
 diagnostic `undefined symbol: thread-local initialization routine for _tls_stderr` seen earlier.
 Not investigated further.
 
-#### `termios02` — mechanism localised, cause **not** established
+#### `termios02` — a Clang miscompile (needs a reduced test case)
 
-`ctermid( term_name )` must return the caller's buffer and does not (`init.c:157`). The test
-declares `char term_name[32]`, so the comparison is straightforward.
+`rtems_test_assert( term_name_p == term_name )` at `init.c:157` fails, where
+`char term_name[32]` and `term_name_p = ctermid( term_name )`.
 
-What was ruled out, in order:
+**Clang folds that comparison to false at compile time.** The call site contains no branch at all:
 
-1. **Not newlib overriding RTEMS.** newlib does not define `ctermid` at all; both toolchains link
-   RTEMS's own `cpukit/libcsupport/src/ctermid.c`.
-2. **The source is plainly correct** — it ends `strcpy( s, ctermid_name ); return s;`.
-3. **The codegen differs.** Clang produces 26 bytes, GCC 40. Clang lowers the tail of the function
-   to a *tail call to `memcpy`*:
+```asm
+800006e8: addi a0, sp, 0x4        # a0 = &term_name
+800006ea: jal  ctermid            # call it...
+800006ec: lui  a0, 0x8000d        # ...and immediately discard the result
+800006f0: addi a0, a0, 0x2ab      #
+...
+80000704: li   a2, 0x9d           # 157  <- the assert's line number
+80000708: jal  __wrap_printf      # assertion-failed message
+8000070e: jal  rtems_test_exit
+```
+
+Only the failure path was emitted. Two pointers to the same object must compare equal, so folding
+this to *false* is unsound.
+
+The relevant lowering is in `ctermid` itself, which Clang reduces to a tail call:
 
 ```asm
 ctermid:
   beqz a0, .Lnull
-  lui  a1, %hi(ctermid_name)      # src
-  addi a1, a1, %lo(ctermid_name)
-  li   a2, 0xd                    # 13 = strlen("/dev/console") + 1
-  j    memcpy                     # tail call; ctermid returns whatever memcpy returns
+  lui/addi a1, ctermid_name
+  li   a2, 0xd
+  j    memcpy               # returns dest, so ctermid returns s
 ```
 
-   This is legal only because `memcpy` is defined to return its destination. It looked like the
-   answer.
+Ruled out along the way, in order:
 
-4. **But it isn't.** Disassembling the `memcpy` actually linked shows every return path is a bare
-   `ret`, and `a0` is never written — the moving pointer is kept in `a5` via `mv a5, a0`. So
-   `memcpy` does return dest, and the tail call is sound.
+1. **Not newlib overriding RTEMS** — newlib does not define `ctermid` at all; both toolchains link
+   RTEMS's own `cpukit/libcsupport/src/ctermid.c`.
+2. **The source is correct** — it ends `strcpy( s, ctermid_name ); return s;`.
+3. **The tail call is sound** — disassembling the linked `memcpy` shows every return path is a bare
+   `ret` with `a0` never written (the moving pointer is kept in `a5` via `mv a5, a0`), so it does
+   return its destination. I initially believed this was the bug; it is not.
 
-**The cause is therefore still unknown.** The obvious explanation was tested and disproven; do not
-assume the tail call is at fault without new evidence. Next step would be to single-step
-`ctermid` under the QEMU gdbstub and observe `a0` at the `ret`, rather than reasoning from the
-listing.
+**Status: not confirmed as an upstream bug.** The evidence is strong but comes from reading one
+optimised binary. Before reporting to LLVM this needs reducing to a self-contained test case —
+a function that copies into its pointer argument, returns it, and whose caller compares the result
+against the original — built for `riscv32` at `-O2` and checked with `llvm-reduce`. Do not file it
+on the strength of the listing alone.
 
 #### `psx13` — localised, not diagnosed
 
