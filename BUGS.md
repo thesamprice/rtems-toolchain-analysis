@@ -113,6 +113,47 @@ for the cast. `ofw01`, `fdt01` and `fdt02` pass before and after under GCC.
 - `TheSamPrice/rtems` branch **`fix/ofw-const-buf`** @ `1cb04299d1`
 - Latent bug in upstream RTEMS independent of compiler.
 
+### F8 — RTEMS: `ARCH_BITS` missing for the last two RISC-V BSPs
+
+The remaining half of F2. `esp32c3db` and `niosvc10lp` also fell through to the empty default and
+produced the invalid triple `riscv-unknown-rtems7`.
+
+Both are unambiguously 32-bit — every `-march` in their `abi.yml` is an `rv32` variant. Verified
+by configuring both with `COMPILER=clang`: `ARCH_BITS` resolves to `'32'` and the triple becomes
+`riscv32-unknown-rtems7`. Neither BSP was built or run; this fixes triple construction only.
+
+**Worth knowing:** these identifiers are *BSP* names, not BSP *family* directory names. The
+families are `spec/build/bsps/riscv/{esp32,niosv}` but the BSPs they define are `esp32c3db` and
+`niosvc10lp`. My first attempt used the family names, and `waf configure` reported
+`No such base BSP: 'riscv/esp32'` — which is only reported when the family name is used in
+`config.ini`, so a wrong entry in `optarchbits.yml` would have silently done nothing. Caught by
+verifying rather than assuming.
+
+- Branch **`fix/clang-riscv-build-support`** @ `edf5790554`
+
+### F9 — RTEMS: `-Wold-style-declaration` passed to Clang
+
+`CC_WARNING_FLAGS` is applied unconditionally, but `-Wold-style-declaration` is GCC-only. Combined
+with `-Werror` in `WARNING_FLAGS`, every compile fails and anyone using `COMPILER=clang` must
+override the whole list by hand.
+
+Added a clang-specific default with the same list minus that option; the GCC path is untouched
+because the `enabled-by: clang` entry does not match. Verified both ways.
+
+This removes one of the twelve `config.ini` workarounds.
+
+- Branch **`fix/clang-riscv-build-support`** @ `877f3791f5`
+
+### F10 — `-Wsign-compare` in `ofw.c` *(triaged, no change needed)*
+
+All four sites are `MIN(len, size)` mixing a signed `int` with a `size_t`. Each is **guarded**:
+line 231 is reached only when `prop != NULL`, in which case libfdt guarantees `len >= 0`; lines
+625 and 681 have explicit `if (len <= 0) return len;` immediately above.
+
+The warnings are legitimate and the code is correct. Left alone deliberately — changing working
+code to silence a warning carries more risk than it removes. Recorded here so the next person does
+not re-triage it.
+
 ---
 
 ## Open
@@ -194,34 +235,17 @@ Not investigated at all:
 
 Plus one unresolved link error in the build: **`_TLS_Configuration`**.
 
-### O5 — `ARCH_BITS` still missing for `riscv/esp32` and `riscv/niosv`
-
-F2 fixed only `mbv`/`mbv64`, because those are the only ones built and tested here. The other two
-still produce an invalid triple under Clang. Deliberately not guessed at.
-
-### O6 — RTEMS code triggers Clang-only diagnostics under `-Werror`
-
-`-Werror` had to be disabled for the build. Real diagnostics seen, not triaged:
-
-- `-Wsign-compare` in `bsps/shared/ofw/ofw.c` (4 sites) — **still open**, not triaged
-- `-Wold-style-declaration` is GCC-only and is applied unconditionally by `optwarncc.yml`;
-  RTEMS has no clang-conditional warning spec
-
-`-Wdefault-const-init-var-unsafe` turned out to be a real bug and is now **F7**. One real bug out
-of three diagnostic classes suggests the remaining `-Wsign-compare` sites are worth triaging
-rather than suppressing.
-
 ---
 
 ## Summary
 
 | | count |
 |---|---:|
-| Fixed and pushed | 7 (F1–F5, F7, most of O1) |
+| Fixed and pushed | 9 (F1–F5, F7–F10, most of O1) |
 | Worked around, needs a proper home | 1 (F6) |
 | Open, root-caused | 1 (O2) |
 | Open, self-inflicted | 1 (O3) |
-| Open, uninvestigated | 3 (O4, O5, O6) |
+| Open, uninvestigated | 1 (O4) |
 
 **O1 is now mostly fixed** — building compiler-rt builtins with hidden symbols disabled, plus
 forcing the helpers into the libdl base images, took the `dl` tests from 4 passing to 8. What is
