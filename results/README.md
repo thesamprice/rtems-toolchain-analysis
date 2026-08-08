@@ -3,24 +3,67 @@
 Raw output from running the RTEMS 7 testsuite against a `riscv/mbv` BSP built entirely with
 Clang 23.0.0git + `ld.lld`, on QEMU `amd-microblaze-v-generic`.
 
-## Headline
+## Progression
 
-| | Clang | GCC baseline |
-|---|---:|---:|
-| tests run | 534 | 543 |
-| PASS | **488** | 517 |
-| XFAIL | 24 | 24 |
-| XFAIL-KNOWN | 2 | 2 |
-| FAIL | 20 | 0 |
+Each row is a full testsuite run against a different build, in chronological order.
 
-The runner retries anything that fails the first time. Five tests (`fdt01`, `fdt02`, `tar01`,
-`tar02`, `psxftw01`) produced no output on the first pass and **passed on retry** — they were
-starved by running four QEMU instances in parallel, not broken. An interim figure of 483 PASS /
-22 FAIL / 5 NO-OUTPUT was recorded before the retry pass completed; the table above is the final
-result and supersedes it.
+| run | build | PASS | FAIL | tests run |
+|---|---|---:|---:|---:|
+| 1 | TLS model + `-T linkcmds` | 488 | 20 | 534 |
+| 2 | + `lseek` UB fix (F5) | 501 | 15 | 542 |
+| final | + compiler-rt, libdl, constructors (F11), `.eh_frame` (F12) | **508** | **10** | 542 of 673* |
+| — | **GCC baseline** | 517 | 0 | 543 |
 
-**This is not an apples-to-apples comparison.** Read the caveats below before quoting these
-numbers.
+\* The final run was still working through its last chunk when these numbers were captured;
+`clang-riscv-mbv-final.txt` holds the 542 results completed at that point. The counts are
+representative but not the complete run.
+
+**The test *count* matters as much as the pass count.** Run 1 ran 534 tests; the final build
+produces 673, because C++ tests that previously failed to *link* now build. So `iostream`,
+`rcxx01` and `exit03` appearing as failures partway through this work were newly built, not
+newly broken.
+
+## Remaining failures (10)
+
+```
+dl06 dl08 dl09  psx13  sptls01 sptls02  termios02  ttest01
+ts-validation-intr  ts-validation-no-clock-0
+```
+
+GCC passes all of these, so each is a Clang-specific difference. Two are diagnosed:
+
+- **`sptls01`** asserts the TLS block is exactly 1 byte; Clang lays it out as 8. An
+  alignment/padding difference, and an over-specified test rather than a toolchain bug.
+- **`sptls02`** is a C++ `thread_local` with a dynamic initialiser, which needs the per-thread
+  `__cxa_thread_atexit` path — separate from the global constructors fixed in F11.
+
+`dl06` needs `_tls_rand48_add`; notably the **GCC** symbol table does not contain it either, so
+this is a difference in what the Clang-built `.rap` module references, not a symbol-table gap.
+
+`dl08`, `dl09`, `psx13`, `termios02`, `ts-validation-*` have had no analysis. `ttest01` was
+XFAIL-KNOWN in earlier runs.
+
+## Caveats — still not an apples-to-apples comparison
+
+1. The build carries workarounds (see [`../repro/config.ini`](../repro/config.ini)), several
+   blunt: `-Werror` is off and startup files are supplied by hand rather than selected by a driver.
+2. It uses **GCC's newlib, libgcc and libstdc++**. Nothing here exercises LLVM's own runtime
+   libraries — compiler-rt's builtins are the one exception, added for F11/O1.
+3. One executable (`dl05`) still does not build; see O3 in [`../BUGS.md`](../BUGS.md).
+
+## Files
+
+| | |
+|---|---|
+| `clang-riscv-mbv-final.txt` | final run, every test and result |
+| `clang-riscv-mbv-final-tally.txt` | the counts above |
+| `clang-riscv-mbv-summary.tsv` | run 1, kept for comparison |
+| `clang-riscv-mbv-failures.txt` | run 1 failures |
+
+## History
+
+Earlier drafts of this file are preserved below rather than deleted, because two of the claims in
+them were wrong and the corrections are instructive.
 
 ## Caveats — why this is not a fair fight
 
