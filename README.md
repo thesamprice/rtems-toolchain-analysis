@@ -181,6 +181,24 @@ self-inflicted: a workaround that deleted rows from a symbol table silently renu
 positional TLS indices that the same file declares, manufacturing a failure that looked exactly
 like a compiler bug.
 
+## Tier A, demonstrated
+
+The cheapest useful configuration in [04](04-llvm-gap-analysis.md) — Clang as a drop-in for GCC,
+using GNU binutils and RTEMS's newlib, with no compiler-rt, no lld and no libc++ — is no longer an
+estimate. **720 of 721 executables link with `riscv-rtems7-ld` and the suite passes 632 tests.**
+
+Getting there needed one flag. GNU ld makes a single pass over each archive, RTEMS's libraries are
+mutually dependent, and GCC hides that inside `-qrtems`, whose spec is
+`--start-group -lrtemsbsp -lrtemscpu -latomic -lc -lgcc --end-group`. The Clang link line has no
+group, so symbols first needed after an archive had been scanned were never found. lld rescans and
+never noticed. The failure surfaced as `DWARF error: mangled line number section`, which was GNU ld
+attaching line numbers to the undefined-reference errors it was already emitting — the real errors
+had scrolled past, which is exactly what [BUGS.md](BUGS.md) O2 suspected.
+
+The one executable that still does not link is not a linker problem: `spcxx01`'s aligned-`new` path
+references `_memalign_r`, which this newlib does not define at all. lld's `--gc-sections` had been
+discarding the reference; GNU ld keeps it. A latent RTEMS/newlib gap that lld was hiding.
+
 ## The asymmetry
 
 GCC's RTEMS support is **large in aggregate but tiny per decision**: a few hundred lines of specs

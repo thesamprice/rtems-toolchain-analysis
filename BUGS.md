@@ -385,7 +385,7 @@ symbols; `%f` prints literally, suggesting newlib's float `printf` support is no
 The RTEMS-side change is on branch **`fix/clang-riscv-build-support`** @ `93cc3dbd5c`. The
 compiler-rt build is a recipe, not a patch — nothing in RTEMS or LLVM needs changing for it.
 
-### O2 — GNU ld cannot link Clang's output for this target
+### O2 — GNU ld cannot link Clang's output for this target *(now fixed)*
 
 Attempted as a fix for O1. `riscv-rtems7-ld` fails with:
 
@@ -414,6 +414,43 @@ executable rather than the last few lines.
 This matters beyond `libdl`: "Clang + GNU binutils" is Tier A of
 [04](04-llvm-gap-analysis.md) — the cheapest useful configuration — so whether it works is worth
 knowing for its own sake.
+
+> **Resolved.** The suspicion recorded above was right: the DWARF complaint was a symptom and the
+> real errors had scrolled past. Capturing the full stderr for one executable shows what actually
+> fails — a wall of `undefined reference to` for `printk`, `rtems_fatal_source_text`,
+> `_CPU_Exception_frame_print`, `fdt_getprop`, `_Thread_Get_name` and friends. All of them live in
+> `librtemscpu.a`, `librtemsbsp.a` and libfdt, which are on the link line.
+>
+> The cause is archive ordering. RTEMS's libraries are mutually dependent, and GNU ld makes a
+> single pass over each archive, so a symbol first needed *after* an archive has been scanned is
+> never found. lld rescans and does not care. **GCC hides this in `-qrtems`**, whose spec is
+> `--start-group -lrtemsbsp -lrtemscpu -latomic -lc -lgcc --end-group` — the group is the whole
+> point, and the Clang link line does not have one. This is the same `-qrtems` gap as everywhere
+> else in this study, showing up as a linker bug.
+>
+> Wrapping the archives in `--start-group`/`--end-group` links cleanly, and the resulting image
+> **boots and runs**:
+>
+> ```
+> *** BEGIN OF TEST HELLO WORLD ***
+> Hello World
+> *** END OF TEST HELLO WORLD ***
+> ```
+>
+> Built at scale, **720 of 721 executables link** and the suite gives 632 pass / 25 XFAIL / 9 SKIP
+> / 7 FAIL — the same failures as the lld-linked build, plus `cpuuse`, which is timing-marginal.
+> Compare with the 15 of 721 recorded above. Results:
+> [`results/clang-riscv-mbv-gnu-ld.txt`](results/).
+>
+> Two details are worth carrying forward. `libstdc++` has to be inside the group too, or its
+> `_Unwind_*` and `_Condition_*` references cannot reach back into it. And the one executable that
+> still does not link, `spcxx01`, is not a linker problem: its aligned-`new` path references
+> `_memalign_r`, **which this newlib does not define at all**. lld's `--gc-sections` discarded the
+> reference as unused; GNU ld inside a group keeps it. That is a latent RTEMS/newlib gap that lld
+> was hiding.
+>
+> **Tier A of [04](04-llvm-gap-analysis.md) — Clang as a drop-in for GCC using GNU binutils — is
+> therefore demonstrated, not just estimated.**
 
 ### O3 — `rtems-syms` exports *undefined* symbols, breaking `dl05` *(now fixed, see F16)*
 
@@ -614,8 +651,10 @@ RTEMS's Clang scaffolding, not an over-specified test; `sptls02` was TLS block a
 **O3 is closed** by F16, one level deeper than it was reported: in `rtemstoolkit` rather than in
 `rtems-syms`.
 
-The highest-value remaining item is **O2**: GNU `ld` cannot link Clang's output for this target at
-all, which blocks the cheapest useful configuration in [04](04-llvm-gap-analysis.md).
+**O2 is closed**, and with it the cheapest useful configuration in
+[04](04-llvm-gap-analysis.md) is demonstrated rather than estimated: Clang plus GNU binutils links
+720 of 721 executables and passes 632 tests. The cause was the missing `--start-group` that
+`-qrtems` supplies, not anything about DWARF.
 
 Three items are worth reporting upstream independent of the Clang work, because each is a live
 defect for people who have never used Clang:
