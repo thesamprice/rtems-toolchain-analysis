@@ -88,9 +88,51 @@ directly: after `*** END OF TEST ***` the QEMU process keeps running until kille
 the tester cannot distinguish "the test failed and shut down" from "the test hung", every test
 costs its full timeout regardless of how quickly it finishes, and a full-suite run is impractical.
 
-That is the honest reason a custom runner exists here rather than a preference for one: it polls
-for the end-of-test marker and kills QEMU, which is what makes a 674-test sweep finish in minutes.
-The right fix is a QEMU exit mechanism in the BSP, which is a separate piece of work.
+### Fixing it: there was nothing for the guest to poke
+
+The cause is one level below RTEMS. QEMU's `amd-microblaze-v-generic` machine provides RAM, a
+UART, timers, an interrupt controller and a few `create_unimplemented_device()` stubs — and **no
+poweroff or test-finisher device of any kind**. The machine does not even generate a device tree
+(`-machine dumpdtb` reports "This machine doesn't have an FDT"). So the mbv BSP linking
+`bsps/shared/start/bspreset-loop.c`, which spins, is not an oversight: there is nothing else it
+could do.
+
+Closing it takes a change on each side, and one non-obvious third step:
+
+1. **QEMU** — instantiate a SiFive test finisher, `sifive_test_create()`, at an unused peripheral
+   address. Nine lines; see [`patches/qemu/`](patches/qemu/). A hand-written program that stores
+   `0x5555` there exits QEMU in 0.5 s.
+2. **The BSP** — look the device up in the FDT by `compatible = "sifive,test0"` and write the
+   finisher value, falling back to spinning when there is none so real hardware is unaffected. The
+   mbv device tree gains the node. See [`patches/rtems/0011-...`](patches/rtems/).
+3. **The device tree has to actually reach the BSP.** This is the step that is easy to miss. mbv
+   takes its FDT from a boot loader register or from `MBV_FDT_PROBE_ADDRESS`, and returns a
+   well-formed *empty* tree when it has neither. QEMU supplies neither, so the lookup in step 2
+   silently found nothing and the BSP kept spinning even with both patches applied. Building the
+   DTB, loading it with `-device loader,file=mbv.dtb,addr=0x10000` into the LMB BRAM, and setting
+   `MBV_FDT_PROBE_ADDRESS = 0x00010000` closes the loop.
+
+The effect:
+
+| | before | after |
+|---|---|---|
+| `hello.exe` | runs until the timeout | exits in **74 ms** |
+| `dl06` (fails) | runs until the timeout | exits in **95 ms**, failure still reported |
+| `ttest01` (fails) | runs until the timeout | exits in **84 ms**, failure still reported |
+| full 674-test sweep | bounded by timeout × tests | **5m44s** |
+
+`rtems-test` can now tell a failed test from a hung one on this BSP, which is what made the seven
+above ambiguous in the first place. Re-running the whole suite on the rebuilt tree gives
+633/25/9/7 — **no verdict changes**, only the time they take.
+
+A side effect worth knowing: `sp04` on its own takes **20.1 s**, so the runner's 25-second cap was
+genuinely marginal rather than obviously too small.
+
+Two caveats. The finisher always writes `FINISHER_PASS`, matching what RTEMS's generic RISC-V BSP
+does, so the QEMU exit code does not encode pass or fail — the tester still classifies on output.
+And the GCC column in the parity table was measured before this BSP change, on a tree that still
+links `bspreset-loop.c`; the clang column was re-measured after, and is byte-identical to the run
+before it, so the comparison stands, but the two were not produced from bit-identical BSP builds.
 
 ## The two genuine compiler bugs
 

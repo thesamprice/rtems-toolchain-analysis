@@ -15,7 +15,7 @@ work needed to do the equivalent in LLVM/Clang.
 | [06](06-libdl-and-lld.md) | **Getting the `dl` tests working** — a TLS model mismatch, and where lld and GNU ld disagree |
 | [07](07-reaching-gcc-parity.md) | **Reaching parity with GCC** — the last eight failures, and why six of them were not compiler bugs |
 | [BUGS.md](BUGS.md) | **Every bug found — fixed, worked around, and still open** |
-| [`patches/`](patches/) | The fixes: three LLVM/lld, ten RTEMS, one rtems-tools |
+| [`patches/`](patches/) | The fixes: three LLVM/lld, eleven RTEMS, two rtems-tools, one QEMU |
 | [`repro/`](repro/) | The `config.ini` carrying the remaining workarounds |
 | [`results/`](results/) | Raw QEMU testsuite output |
 | [`evidence/`](evidence/) | Commands run and their raw output |
@@ -139,6 +139,14 @@ machine does not terminate QEMU when RTEMS shuts down**, so `rtems-test` cannot 
 failed and shut down from one that hung — both are reported as `timeout` — and every test costs its
 full timeout no matter how fast it finishes. There was also no `rtems-test` BSP configuration for
 `riscv/mbv`; one is included in [`patches/rtems-tools/`](patches/rtems-tools/).
+
+That one is now fixed rather than just reported. The machine had **no poweroff device of any kind**,
+so the BSP's spinning `bsp_reset()` was the only thing it could do. Adding a SiFive test finisher to
+the machine, teaching the BSP to find it in the device tree, and actually getting the device tree to
+the BSP — the step that is easy to miss, since mbv falls back to an empty tree and QEMU supplies
+none — takes `hello.exe` from occupying the runner for its full timeout to **exiting in 74 ms**, and
+a full 674-test sweep to **5m44s**. No test verdict changes. Patches in
+[`patches/qemu/`](patches/qemu/) and [`patches/rtems/`](patches/rtems/).
 
 The breakdown of the eight root causes is the actual finding, and it is not what I expected going
 in. **Two were compiler bugs. Six were not.**

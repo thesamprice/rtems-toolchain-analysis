@@ -1,0 +1,33 @@
+--- a/hw/riscv/microblaze-v-generic.c
++++ b/hw/riscv/microblaze-v-generic.c
+@@ -25,6 +25,7 @@
+ #include "system/address-spaces.h"
+ #include "hw/char/xilinx_uartlite.h"
+ #include "hw/misc/unimp.h"
++#include "hw/misc/sifive_test.h"
+ 
+ #define LMB_BRAM_SIZE (128 * KiB)
+ #define MEMORY_BASEADDR 0x80000000
+@@ -41,6 +42,7 @@
+ #define GPIO_BASEADDR3 0x40020000
+ #define I2C_BASEADDR 0x40800000
+ #define QSPI_BASEADDR 0x44a00000
++#define TEST_BASEADDR 0x40100000
+ 
+ #define TIMER_IRQ           0
+ #define UARTLITE_IRQ        1
+@@ -168,6 +170,14 @@
+     sysbus_connect_irq(SYS_BUS_DEVICE(dma), 0, irq[AXIDMA_IRQ0]);
+     sysbus_connect_irq(SYS_BUS_DEVICE(dma), 1, irq[AXIDMA_IRQ1]);
+ 
++    /*
++     * A SiFive test finisher, so a guest can shut the machine down.  Without
++     * it there is no way for software to terminate QEMU on this board, which
++     * makes automated test runners unable to tell a test that failed and
++     * halted from one that hung.
++     */
++    sifive_test_create(TEST_BASEADDR);
++
+     /* unimplemented devices */
+     create_unimplemented_device("gpio", GPIO_BASEADDR, 0x10000);
+     create_unimplemented_device("gpio2", GPIO_BASEADDR2, 0x10000);
