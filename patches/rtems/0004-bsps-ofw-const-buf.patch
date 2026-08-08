@@ -1,0 +1,57 @@
+From 1cb04299d177671ea3cb0273dff5b0708a4713d9 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 00:21:31 -0400
+Subject: [PATCH] bsps/ofw: Do not write into a const buffer in
+ rtems_ofw_node_status()
+
+rtems_ofw_node_status() declared its scratch buffer const, then cast the
+const away to let rtems_ofw_get_prop() fill it in:
+
+  const char buf[10];
+
+  len = rtems_ofw_get_prop(node, "status", (void *)&buf[0], sizeof(buf));
+
+Modifying an object defined with a const-qualified type is undefined
+behaviour.  A compiler is entitled to assume buf never changes after its
+(absent) initialisation and to fold the subsequent strncmp() calls
+against indeterminate contents, in which case a node's "status" property
+is never really examined and rtems_ofw_node_status() returns an answer
+unrelated to the device tree.
+
+clang reports this as
+
+  error: default initialization of an object of type 'const char[10]'
+  leaves the object uninitialized [-Wdefault-const-init-var-unsafe]
+
+Drop the const, which also removes the need for the cast.  There is no
+reason for the buffer to be const: it is a local output buffer.
+
+rtems_ofw_get_prop() already takes a void * rather than a const void *,
+so no other change is needed.
+
+ofw01, fdt01 and fdt02 pass on riscv/mbv before and after.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ bsps/shared/ofw/ofw.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/bsps/shared/ofw/ofw.c b/bsps/shared/ofw/ofw.c
+index 5567df75f3..97af8bf23f 100644
+--- a/bsps/shared/ofw/ofw.c
++++ b/bsps/shared/ofw/ofw.c
+@@ -684,9 +684,9 @@ int rtems_ofw_get_interrupts(
+ bool rtems_ofw_node_status( phandle_t node )
+ {
+   int len;
+-  const char buf[10];
++  char buf[10];
+ 
+-  len = rtems_ofw_get_prop(node, "status", (void *)&buf[0], sizeof(buf));
++  len = rtems_ofw_get_prop(node, "status", &buf[0], sizeof(buf));
+   if ((len == -1) ||
+       (strncmp(buf, "okay", MIN(5, len)) == 0) ||
+       (strncmp(buf, "ok", MIN(3, len)) == 0)) {
+-- 
+2.39.5 (Apple Git-154)
+

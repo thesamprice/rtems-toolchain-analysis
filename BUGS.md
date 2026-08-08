@@ -94,6 +94,25 @@ gcc:    R_RISCV_TPREL_HI20 / _ADD / _LO12_I      (local-exec)
 **Not fixed properly** — this is a target default that belongs in a Clang RTEMS ToolChain, not in
 every user's `config.ini`.
 
+### F7 — RTEMS: write into a `const` buffer in `rtems_ofw_node_status()`
+
+```c
+const char buf[10];
+len = rtems_ofw_get_prop(node, "status", (void *)&buf[0], sizeof(buf));
+```
+
+Modifying an object defined with a const-qualified type is undefined behaviour. A compiler may
+assume `buf` never changes and fold the subsequent `strncmp()` calls against indeterminate
+contents — in which case a node's `status` property is never really examined and the function
+returns an answer unrelated to the device tree. `rtems_ofw_node_status()` decides whether a
+device-tree node is enabled, so this is a real functional risk, not a style nit.
+
+Found via clang's `-Wdefault-const-init-var-unsafe`. Dropping the `const` also removes the need
+for the cast. `ofw01`, `fdt01` and `fdt02` pass before and after under GCC.
+
+- `TheSamPrice/rtems` branch **`fix/ofw-const-buf`** @ `1cb04299d1`
+- Latent bug in upstream RTEMS independent of compiler.
+
 ---
 
 ## Open
@@ -183,11 +202,13 @@ still produce an invalid triple under Clang. Deliberately not guessed at.
 
 `-Werror` had to be disabled for the build. Real diagnostics seen, not triaged:
 
-- `-Wsign-compare` in `bsps/shared/ofw/ofw.c` (4 sites)
-- `-Wdefault-const-init-var-unsafe` — `const char[10]` left uninitialised, `ofw.c:687`
-- `-Wold-style-declaration` is GCC-only and is applied unconditionally by `optwarncc.yml`
+- `-Wsign-compare` in `bsps/shared/ofw/ofw.c` (4 sites) — **still open**, not triaged
+- `-Wold-style-declaration` is GCC-only and is applied unconditionally by `optwarncc.yml`;
+  RTEMS has no clang-conditional warning spec
 
-The `ofw.c:687` uninitialised-`const` one looks like a genuine bug rather than a style nit.
+`-Wdefault-const-init-var-unsafe` turned out to be a real bug and is now **F7**. One real bug out
+of three diagnostic classes suggests the remaining `-Wsign-compare` sites are worth triaging
+rather than suppressing.
 
 ---
 
@@ -195,7 +216,7 @@ The `ofw.c:687` uninitialised-`const` one looks like a genuine bug rather than a
 
 | | count |
 |---|---:|
-| Fixed and pushed | 5 (F1–F5) |
+| Fixed and pushed | 6 (F1–F5, F7) |
 | Worked around, needs a proper home | 1 (F6) |
 | Open, root-caused | 2 (O1, O2) |
 | Open, self-inflicted | 1 (O3) |
