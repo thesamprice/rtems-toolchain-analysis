@@ -1,0 +1,71 @@
+From 16a8293207a125a3a8ea11a0b5575af98c8bfc98 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 13:09:59 -0400
+Subject: [PATCH] tester: Add an rtems-test BSP configuration for riscv/mbv
+
+The riscv/mbv BSP boots on QEMU's amd-microblaze-v-generic machine, which
+takes its image through a loader device rather than -kernel, so
+bsp_qemu_image_type and bsp_qemu_image_path are overridden rather than
+using the qemu.cfg defaults.  arch is riscv32 so that qemu-system-riscv32
+is selected; the RTEMS architecture directory is riscv.
+
+Note that the machine does not terminate QEMU when RTEMS shuts down, so
+every test runs until the tester's timeout and a test that fails and shuts
+down is reported the same as one that hangs.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ tester/rtems/testing/bsps/mbv_qemu.ini | 41 ++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+ create mode 100644 tester/rtems/testing/bsps/mbv_qemu.ini
+
+diff --git a/tester/rtems/testing/bsps/mbv_qemu.ini b/tester/rtems/testing/bsps/mbv_qemu.ini
+new file mode 100644
+index 0000000..0dd1f83
+--- /dev/null
++++ b/tester/rtems/testing/bsps/mbv_qemu.ini
+@@ -0,0 +1,41 @@
++#
++# RTEMS Tools Project (http://www.rtems.org/)
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions are met:
++#
++# 1. Redistributions of source code must retain the above copyright notice,
++# this list of conditions and the following disclaimer.
++#
++# 2. Redistributions in binary form must reproduce the above copyright notice,
++# this list of conditions and the following disclaimer in the documentation
++# and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
++# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++# POSSIBILITY OF SUCH DAMAGE.
++#
++
++#
++# The RISC-V MicroBlaze-V (riscv/mbv) BSP on QEMU.
++#
++# The machine takes its image through a loader device rather than -kernel, so
++# bsp_qemu_image_type and bsp_qemu_image_path are overridden rather than using
++# the qemu.cfg defaults.  arch is riscv32 so that qemu-system-riscv32 is
++# selected; the RTEMS architecture directory is riscv.
++#
++[mbv_qemu]
++bsp                 = mbv_qemu
++arch                = riscv32
++tester              = %{_rtscripts}/qemu.cfg
++bsp_qemu_opts       = -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio
++bsp_qemu_image_type = -device
++bsp_qemu_image_path = loader,file=%{test_executable},cpu-num=0
+-- 
+2.39.5 (Apple Git-154)
+

@@ -30,10 +30,51 @@ only form of this claim worth making.
 | GCC | 633 | 25 | 9 | 7 | 674 |
 | Clang | 633 | 25 | 9 | 7 | 674 |
 
-The seven remaining failures — `cpuuse`, `dl06`, `sp04`, `spcontext01`, `sptimecounter03`,
-`tmfine01`, `ttest01` — fail identically under GCC and have not been chased. They are most likely
-artifacts of the runner's 25-second timeout. **Parity means matching, not zero**, and the caveats
-at the end of this document matter more than the table does.
+The seven remaining failures fail identically under GCC. **Parity means matching, not zero.** They
+are explained in the next section; five are artifacts of how the tests are run and two are real.
+
+## The seven shared failures
+
+These were originally recorded as "probably timeouts, not chased". They have now been run through
+RTEMS's own `rtems-test` — there was no BSP configuration for `riscv/mbv`, so one was written and
+is included in [`patches/rtems-tools/0002-...`](patches/rtems-tools/). Raw log in
+[`results/rtems-test-seven-shared-failures.log`](results/).
+
+| test | `rtems-test` | explanation |
+|---|---|---|
+| `cpuuse` | **passed** | long-running; truncated by the runner's 25 s cap |
+| `sp04` | **passed** | same |
+| `spcontext01` | **passed** | same, cut mid `Test configuration F F N...` |
+| `tmfine01` | **passed** | timing benchmark, cut mid-JSON |
+| `sptimecounter03` | timeout | not a hang — see below |
+| `dl06` | timeout | **real failure**: `dlopen failed: global symbol not found: _tls_rand48_add` |
+| `ttest01` | timeout | **real failure**: aborts at `test-malloc.c:75` in `zalloc_auto` |
+
+So four of the seven were purely an artifact of the runner's timeout and pass under a longer one.
+
+**`sptimecounter03` is not a hang either.** `test_binuptime_init()` returns
+`10 * rtems_clock_get_ticks_per_second()`, so the job spins for **ten seconds of guest time** with
+no output between `TEST_BEGIN` and `TEST_END`. Under `-icount shift=0,sleep=off` — which the
+runner uses for determinism — ten guest seconds cost far more than ten wall seconds, so it
+exceeded every timeout used. Run without `-icount` it reaches `*** END OF TEST ***` normally. It is
+a slow test, not a failing one.
+
+**`dl06` and `ttest01` are genuine failures, on both compilers.** `dl06` is the last of the O1
+class: a TLS symbol, `_tls_rand48_add`, that is not forced into the libdl base image. `ttest01`
+aborts inside the test framework's own malloc test. Both produce byte-identical output under GCC
+and Clang, so neither is a toolchain difference — they are RTEMS issues on this BSP, and both are
+out of scope for a parity comparison.
+
+**A structural finding worth recording.** `rtems-test` reports `dl06` and `ttest01` as *timeout*
+rather than *failed*, even though both print a diagnostic and shut down cleanly. The reason is that
+**the `amd-microblaze-v-generic` machine does not terminate QEMU when RTEMS shuts down** — verified
+directly: after `*** END OF TEST ***` the QEMU process keeps running until killed. So on this BSP
+the tester cannot distinguish "the test failed and shut down" from "the test hung", every test
+costs its full timeout regardless of how quickly it finishes, and a full-suite run is impractical.
+
+That is the honest reason a custom runner exists here rather than a preference for one: it polls
+for the end-of-test marker and kills QEMU, which is what makes a 674-test sweep finish in minutes.
+The right fix is a QEMU exit mechanism in the BSP, which is a separate piece of work.
 
 ## The two genuine compiler bugs
 
@@ -371,10 +412,10 @@ from the RSB-built GCC. The only LLVM runtime component is `libclang_rt.builtins
 as a code generator against GNU's runtime, not an LLVM toolchain. Nothing in Tier B has been
 tested, including the one-line `libcxx/__config` change identified as the highest-value item there.
 
-**The harness is not RTEMS's.** 674 is what `tools/run-all.sh` found and classified. The project's
-own `rtems-test` may disagree, and the seven shared failures deserve explanation rather than the
-assumption that they are timeouts. The 25 XFAILs are unaudited — some could be Clang-specific
-damage wearing an expected-failure label.
+**The harness is not RTEMS's**, though the seven shared failures have now been checked against
+`rtems-test` and are explained above. A full-suite `rtems-test` run is impractical on this BSP
+until QEMU terminates on shutdown. The 25 XFAILs are still unaudited — some could be
+Clang-specific damage wearing an expected-failure label.
 
 **`-ftls-model=local-exec` is still forced** and it is not known whether Clang's default works now
 that the TLS alignment bug is fixed. It was never re-tested.

@@ -125,7 +125,17 @@ result files is empty.
 | GCC | 633 | 25 | 9 | 7 |
 | Clang | 633 | 25 | 9 | 7 |
 
-The seven remaining failures fail identically under GCC. **Parity means matching, not zero.**
+The seven remaining failures fail identically under GCC. **Parity means matching, not zero** — and
+they are now explained rather than assumed. Run through RTEMS's own `rtems-test`, four of the seven
+pass outright and were only ever artifacts of the runner's 25-second cap; `sptimecounter03` is a
+ten-guest-second test made very slow by `-icount`, not a hang; and `dl06` and `ttest01` are genuine
+RTEMS failures with byte-identical output under both compilers.
+
+Doing that turned up a structural problem worth knowing about: **the `amd-microblaze-v-generic`
+machine does not terminate QEMU when RTEMS shuts down**, so `rtems-test` cannot tell a test that
+failed and shut down from one that hung — both are reported as `timeout` — and every test costs its
+full timeout no matter how fast it finishes. There was also no `rtems-test` BSP configuration for
+`riscv/mbv`; one is included in [`patches/rtems-tools/`](patches/rtems-tools/).
 
 The breakdown of the eight root causes is the actual finding, and it is not what I expected going
 in. **Two were compiler bugs. Six were not.**
@@ -183,8 +193,8 @@ RTEMS*, not that LLVM's own runtime stack works — the only LLVM runtime compon
 `libclang_rt.builtins.a`.
 
 The parity result in [07](07-reaching-gcc-parity.md) carries its own caveats, stated there in
-full: the harness is ours rather than RTEMS's own `rtems-test`, the seven shared failures are
-assumed to be timeouts rather than explained, the 25 XFAILs are unaudited, and everything
+full: the harness is ours rather than RTEMS's own `rtems-test` — though the seven shared failures
+have since been checked against it and explained — the 25 XFAILs are unaudited, and everything
 `-qrtems` does is still hand-rolled in [`repro/config.ini`](repro/config.ini) with machine-specific
 absolute paths. The earlier testsuite numbers in [05](05-clang-riscv-bringup.md) and
 [06](06-libdl-and-lld.md) were **not** a fair comparison against GCC — different denominators and

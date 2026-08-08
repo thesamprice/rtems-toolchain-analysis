@@ -1,0 +1,339 @@
+RTEMS Testing - Tester, 7.0.not_released
+ Command Line: <home>/rtems/7/bin/rtems-test --rtems-bsp=mbv_qemu --timeout=150 --log-mode=all --jobs=7 --log=<scratch>/seven.log <scratch>/wt-clang/build/riscv/mbv/testsuites/libtests/cpuuse.exe <scratch>/wt-clang/build/riscv/mbv/testsuites/libtests/dl06.exe <scratch>/wt-clang/build/riscv/mbv/testsuites/sptests/sp04.exe <scratch>/wt-clang/build/riscv/mbv/testsuites/sptests/spcontext01.exe <scratch>/wt-clang/build/riscv/mbv/testsuites/sptests/sptimecounter03.exe <scratch>/wt-clang/build/riscv/mbv/testsuites/tmtests/tmfine01.exe <scratch>/wt-clang/build/riscv/mbv/testsuites/libtests/ttest01.exe
+ Host: Darwin samuels-macbook-pro.tail67cb07.ts.net 24.5.0 Darwin Kernel Version 24.5.0: Tue Apr 22 19:54:49 PDT 2025; root:xnu-11417.121.6~2/RELEASE_ARM64_T6000 arm64
+ Python: 3.11.13 (main, Jun  6 2025, 23:28:53) [Clang 16.0.0 (clang-1600.0.26.6)]
+Host: macOS-15.5-arm64-arm-64bit (Darwin samuels-macbook-pro.tail67cb07.ts.net 24.5.0 Darwin Kernel Version 24.5.0: Tue Apr 22 19:54:49 PDT 2025; root:xnu-11417.121.6~2/RELEASE_ARM64_T6000 arm64 arm)
+[1/7] p:1 f:0 u:0 e:0 I:0 B:0 t:3 L:0 i:0 W:0 | E p.....t.... o:   74 p:651.886 | riscv32/mbv_qemu: cpuuse.exe
+Result: passed    
+Time: 0:10:51.885961 cpuuse.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-clang/build/riscv/mbv/testsuites/libtests/cpuuse.exe,cpu-num=0
+] 
+] 
+=>  test start: CPUUSE
+] *** BEGIN OF TEST CPUUSE ***
+] *** TEST VERSION: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] TA1 - rtems_task_suspend - on Task 2
+] TA1 - rtems_task_suspend - on Task 3
+] TA1 - killing time
+] TA1 - rtems_task_resume - on Task 2
+] TA1 - rtems_task_resume - on Task 3
+] TA1 - rtems_task_mode - change mode to NO RTEMS_PREEMPT
+] TA1 - 09:15:09   12/31/1988
+] TA1 - 09:15:10   12/31/1988
+] TA1 - 09:15:11   12/31/1988
+] TA1 - 09:15:12   12/31/1988
+] TA1 - 09:15:13   12/31/1988
+] TA1 - 09:15:14   12/31/1988
+] TA1 - rtems_task_mode - change mode to RTEMS_PREEMPT
+] TA1 - 09:15:00   12/31/1988
+] TA2 - 09:15:03   12/31/1988
+] TA3 - 09:15:04   12/31/1988
+] TA1 - 09:15:05   12/31/1988
+] TA2 - 09:15:06   12/31/1988
+] TA3 - 09:15:07   12/31/1988
+] TA1 - 09:15:08   12/31/1988
+] TA2 - 09:15:14   12/31/1988
+] TA3 - 09:15:15   12/31/1988
+] TA1 - 09:15:16   12/31/1988
+] TA2 - 09:15:17   12/31/1988
+] 
+] -------------------------------------------------------------------------------
+]                               CPU USAGE BY THREAD
+] ------------+----------------------------------------+---------------+---------
+]  ID         | NAME                                   | SECONDS       | PERCENT
+] ------------+----------------------------------------+---------------+---------
+]  0x09010001 | IDLE                                   |      1.000006 |   5.263
+]  0x0a010001 | UI1                                    |      0.000019 |   0.000
+]  0x0a010002 | TA1                                    |     11.999974 |  63.157
+]  0x0a010003 | TA2                                    |      3.000132 |  15.790
+]  0x0a010004 | TA3                                    |      3.000000 |  15.789
+] ------------+----------------------------------------+---------------+---------
+]  TIME SINCE LAST CPU USAGE RESET IN SECONDS:                         19.000147
+] -------------------------------------------------------------------------------
+] 
+] TA2 - RESETTING USAGE STATISTICS
+] 
+] -------------------------------------------------------------------------------
+]                               CPU USAGE BY THREAD
+] ------------+----------------------------------------+---------------+---------
+]  ID         | NAME                                   | SECONDS       | PERCENT
+] ------------+----------------------------------------+---------------+---------
+]  0x09010001 | IDLE                                   |      0.000000 |   0.000
+]  0x0a010001 | UI1                                    |      0.000000 |   0.000
+]  0x0a010002 | TA1                                    |      0.000000 |   0.000
+]  0x0a010003 | TA2                                    |      0.000045 |  99.057
+]  0x0a010004 | TA3                                    |      0.000000 |   0.000
+] ------------+----------------------------------------+---------------+---------
+]  TIME SINCE LAST CPU USAGE RESET IN SECONDS:                          0.000059
+] -------------------------------------------------------------------------------
+] 
+] 
+] *** END OF TEST CPUUSE ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] RTEMS tools: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] executing thread ID: 0x0a010003
+] executing thread name: TA2 
+] *** TIMEOUT TIMEOUT
+[2/7] p:1 f:0 u:0 e:0 I:0 B:0 t:3 L:0 i:0 W:0 | E ........... o:   19 p:615.036 | riscv32/mbv_qemu: dl06.exe
+Result: timeout   
+Time: 0:10:15.036102 dl06.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-clang/build/riscv/mbv/testsuites/libtests/dl06.exe,cpu-num=0
+] 
+] 
+=>  test start: libdl (RTL) 6
+] *** BEGIN OF TEST libdl (RTL) 6 ***
+] *** TEST VERSION: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] 
+] load: /dl06.rap
+] dlopen failed: global symbol not found: _tls_rand48_add
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] RTEMS tools: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+[3/7] p:1 f:0 u:0 e:0 I:0 B:0 t:3 L:0 i:0 W:0 | E ........... o:   30 p:615.231 | riscv32/mbv_qemu: ttest01.exe
+Result: timeout   
+Time: 0:10:15.230619 ttest01.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-clang/build/riscv/mbv/testsuites/libtests/ttest01.exe,cpu-num=0
+] 
+] 
+=>  test start: TTEST 1
+] *** BEGIN OF TEST TTEST 1 ***
+] *** TEST VERSION: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] A:ttest01
+] S:Platform:RTEMS
+] S:Compiler:*
+] S:Version:*
+] S:BSP:*
+] S:BuildLabel:*
+] S:TargetHash:SHA256:*
+] S:RTEMS_DEBUG:*
+] S:RTEMS_MULTIPROCESSING:*
+] S:RTEMS_POSIX_API:*
+] S:RTEMS_PROFILING:*
+] S:RTEMS_SMP:*
+] B:zalloc_auto
+] P:0:0:UI1:test-malloc.c:3FAILED:75:*ctx->c == c
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] RTEMS tools: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+[4/7] p:2 f:0 u:0 e:0 I:0 B:0 t:3 L:0 i:0 W:0 | E p.......... o:   43 p:657.069 | riscv32/mbv_qemu: sp04.exe
+Result: passed    
+Time: 0:10:57.069236 sp04.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-clang/build/riscv/mbv/testsuites/sptests/sp04.exe,cpu-num=0
+] 
+] 
+=>  test start: SP 4
+] *** BEGIN OF TEST SP 4 ***
+] *** TEST VERSION: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] TA1 - rtems_task_suspend - on Task 2
+] TA1 - rtems_task_suspend - on Task 3
+] TA1 - killing time
+] TA1 - rtems_task_resume - on Task 2
+] TA1 - rtems_task_resume - on Task 3
+] TA1 - rtems_task_mode - change mode to NO RTEMS_PREEMPT
+] TA1 - 09:15:09   12/31/1988
+] TA1 - 09:15:10   12/31/1988
+] TA1 - 09:15:11   12/31/1988
+] TA1 - 09:15:12   12/31/1988
+] TA1 - 09:15:13   12/31/1988
+] TA1 - 09:15:14   12/31/1988
+] TA1 - rtems_task_mode - change mode to RTEMS_PREEMPT
+] TA1 - 09:15:00   12/31/1988
+] TA2 - 09:15:03   12/31/1988
+] TA3 - 09:15:04   12/31/1988
+] TA1 - 09:15:05   12/31/1988
+] TA2 - 09:15:06   12/31/1988
+] TA3 - 09:15:07   12/31/1988
+] TA1 - 09:15:08   12/31/1988
+] TA2 - 09:15:14   12/31/1988
+] TA3 - 09:15:15   12/31/1988
+] TA1 - 09:15:16   12/31/1988
+] TA1 - rtems_extension_delete - successful
+] 
+] *** END OF TEST SP 4 ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] RTEMS tools: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] executing thread ID: 0x0a010002
+] executing thread name: TA1 
+] *** TIMEOUT TIMEOUT
+[5/7] p:3 f:0 u:0 e:0 I:0 B:0 t:3 L:0 i:0 W:0 | E p.......... o:   27 p:665.840 | riscv32/mbv_qemu: spcontext01.exe
+Result: passed    
+Time: 0:11:05.840244 spcontext01.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-clang/build/riscv/mbv/testsuites/sptests/spcontext01.exe,cpu-num=0
+] 
+] 
+=>  test start: SPCONTEXT 1
+] *** BEGIN OF TEST SPCONTEXT 1 ***
+] *** TEST VERSION: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] Test configuration N N N... done
+] Test configuration N N F... done
+] Test configuration N F N... done
+] Test configuration N F F... done
+] Test configuration F N N... done
+] Test configuration F N F... done
+] Test configuration F F N... done
+] Test configuration F F F... done
+] 
+] *** END OF TEST SPCONTEXT 1 ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] RTEMS tools: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+[6/7] p:3 f:0 u:0 e:0 I:0 B:0 t:3 L:0 i:0 W:0 | E ........... o:    2 p:614.930 | riscv32/mbv_qemu: sptimecounter03.exe
+Result: timeout   
+Time: 0:10:14.930009 sptimecounter03.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-clang/build/riscv/mbv/testsuites/sptests/sptimecounter03.exe,cpu-num=0
+] *** TIMEOUT TIMEOUT
+[7/7] p:4 f:0 u:0 e:0 I:0 B:0 t:3 L:0 i:0 W:0 | E p.......... o:   96 p:677.468 | riscv32/mbv_qemu: tmfine01.exe
+Result: passed    
+Time: 0:11:17.468306 tmfine01.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-clang/build/riscv/mbv/testsuites/tmtests/tmfine01.exe,cpu-num=0
+] 
+] 
+=>  test start: TMFINE 1
+] *** BEGIN OF TEST TMFINE 1 ***
+] *** TEST VERSION: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] *** BEGIN OF JSON DATA ***
+] [
+]   {
+]     "type": "event",
+]     "description": "Send Event to Self",
+]     "counter": [
+]       [8263914]
+]     ]
+]   }, {
+]     "type": "event",
+]     "description": "Send Event to One",
+]     "counter": [
+]       [8196266]
+]     ]
+]   }, {
+]     "type": "contested-mutex",
+]     "description": "Obtain/Release Contested Classic Inheritance Mutex",
+]     "counter": [
+]       [8695169]
+]     ]
+]   }, {
+]     "type": "message",
+]     "description": "Send Message to Self",
+]     "counter": [
+]       [3086245]
+]     ]
+]   }, {
+]     "type": "message",
+]     "description": "Send Message to One Receiver",
+]     "counter": [
+]       [3076754]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Pthread Spinlock",
+]     "counter": [
+]       [58820265]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private <sys/lock.h> Mutex",
+]     "counter": [
+]       [39997688]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Pthread Inheritance Mutex",
+]     "counter": [
+]       [10988378]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Classic Inheritance Mutex",
+]     "counter": [
+]       [8695154]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Pthread Ceiling Mutex",
+]     "counter": [
+]       [1281979]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Classic Ceiling Mutex",
+]     "counter": [
+]       [1254635]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Classic MrsP Mutex",
+]     "counter": [
+]       [1254635]
+]     ]
+]   }
+] ]
+] *** END OF JSON DATA ***
+] 
+] *** END OF TEST TMFINE 1 ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.3db06090a790d0d56abfcc0680a6866bebc85d42-modified
+] RTEMS tools: Clang 23.0.0git (https://github.com/llvm/llvm-project.git f3fdc3597a122b889df3fa75d325748ceaff8fed)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+
+Passed:        4
+Failed:        0
+User Input:    0
+Expected Fail: 0
+Indeterminate: 0
+Benchmark:     0
+Timeout:       3
+Test too long: 0
+Invalid:       0
+Wrong Version: 0
+Wrong Build:   0
+Wrong Tools:   0
+Wrong Header:  0
+----------------
+Total:         7
+Timeouts:
+ dl06.exe
+ sptimecounter03.exe
+ ttest01.exe
+Average test time: 0:01:36.833944
+Testing time     : 0:11:17.837608
