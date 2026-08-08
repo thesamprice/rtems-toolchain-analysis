@@ -1,0 +1,406 @@
+From e29ae7fb597a55f9e1201df3c19a277211cf1972 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Wed, 29 Jul 2026 22:15:32 -0400
+Subject: [PATCH 1/2] bsps/riscv/mbv: Add a device tree source for the QEMU
+ machine
+
+Add a device tree describing the QEMU amd-microblaze-v-generic machine,
+which is the platform the default build options of this BSP describe.  It
+serves both as the tree to use when running on that machine and as a
+worked example of what the BSP expects from the tree of a real design.
+
+The nodes carry the compatible strings the Xilinx device tree generator
+emits, so the file is close to what the tooling produces for a design with
+the same IP:  an AXI Interrupt Controller at 0x41200000 with input 1 edge
+sensitive, two AXI Timers at 0x41c00000 and 0x41c10000 on inputs 0 and 6
+at 100 MHz, an AXI UART Lite at 0x40600000 on input 1, and an AXI UART
+16550 at 0x44a10000 with a register offset of 0x1000 on input 4.
+
+There is no build rule which turns a BSP device tree source into a blob:
+the dtc and rtems-bin2c support in the build system is used by the
+testsuite only.  Document the dtc invocation in the file instead, as every
+other BSP which ships a device tree source does, along with how to get the
+blob into the machine, since it neither synthesizes a device tree nor
+accepts -dtb and has to be handed one through a loader device.
+
+Both BSPs: 517 PASS / 24 XFAIL / 2 XFAIL-KNOWN / 0 FAIL on QEMU 10.2 with
+no device tree, unchanged, since the file is data and not built.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ .../mbv/dts/amd-microblaze-v-generic.dts      | 176 ++++++++++++++++++
+ spec/build/bsps/riscv/mbv/obj.yml             |   3 +
+ 2 files changed, 179 insertions(+)
+ create mode 100644 bsps/riscv/mbv/dts/amd-microblaze-v-generic.dts
+
+diff --git a/bsps/riscv/mbv/dts/amd-microblaze-v-generic.dts b/bsps/riscv/mbv/dts/amd-microblaze-v-generic.dts
+new file mode 100644
+index 0000000000..495652b28b
+--- /dev/null
++++ b/bsps/riscv/mbv/dts/amd-microblaze-v-generic.dts
+@@ -0,0 +1,176 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++
++/*
++ * Copyright (C) 2026 Samuel Price
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++/*
++ * A device tree for the QEMU amd-microblaze-v-generic machine, which
++ * corresponds to the default configuration of the BSP.  On real hardware the
++ * device tree emitted by the Xilinx tooling for the design should be used
++ * instead.
++ *
++ * There is no build rule which turns a BSP device tree source into a blob, so
++ * compile this file by hand:
++ *
++ *     dtc -I dts -O dtb -o amd-microblaze-v-generic.dtb \
++ *         bsps/riscv/mbv/dts/amd-microblaze-v-generic.dts
++ *
++ * The machine does not synthesize a device tree and does not pass a device
++ * tree pointer in a1, so the blob has to be placed in memory and found by the
++ * BSP.  Load it into the LMB BRAM at 0x0, which is outside every RTEMS linker
++ * region and therefore cannot be overwritten by the BSS or the work area, and
++ * build the BSP with MBV_FDT_PROBE_ADDRESS set to the same address:
++ *
++ *     qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m \
++ *         -display none -serial mon:stdio -no-reboot \
++ *         -icount shift=0,sleep=off \
++ *         -device loader,file=ticker.exe,cpu-num=0 \
++ *         -device loader,file=amd-microblaze-v-generic.dtb,addr=0x4000,force-raw=on
++ */
++
++/dts-v1/;
++
++/ {
++	#address-cells = <0x1>;
++	#size-cells = <0x1>;
++	compatible = "amd,microblaze-v-generic";
++	model = "AMD MicroBlaze V Generic";
++
++	cpus {
++		#address-cells = <0x1>;
++		#size-cells = <0x0>;
++		timebase-frequency = <0x5f5e100>;
++
++		cpu@0 {
++			compatible = "amd,microblaze-v", "riscv";
++			device_type = "cpu";
++			reg = <0x0>;
++			clock-frequency = <0x5f5e100>;
++			riscv,isa = "rv32imac";
++			status = "okay";
++		};
++	};
++
++	amba_pl {
++		#address-cells = <0x1>;
++		#size-cells = <0x1>;
++		compatible = "simple-bus";
++		ranges;
++
++		/*
++		 * The interrupt output of the controller is wired to the
++		 * machine external interrupt of the hart, there is no PLIC and
++		 * no CLINT.  The kind-of-intr mask marks input 1, the AXI UART
++		 * Lite, as the only edge sensitive input; this is what the
++		 * machine configures its controller with.
++		 */
++		intc: interrupt-controller@41200000 {
++			#interrupt-cells = <0x2>;
++			compatible = "xlnx,axi-intc-4.1", "xlnx,xps-intc-1.00.a";
++			interrupt-controller;
++			reg = <0x41200000 0x10000>;
++			xlnx,kind-of-intr = <0x2>;
++			xlnx,num-intr-inputs = <0xa>;
++		};
++
++		/*
++		 * The first AXI Timer.  Channel 0 generates the clock tick,
++		 * channel 1 is the free running counter behind the timecounter
++		 * and the CPU counter.
++		 */
++		timer@41c00000 {
++			clock-frequency = <0x5f5e100>;
++			compatible = "xlnx,axi-timer-2.0", "xlnx,xps-timer-1.00.a";
++			interrupt-parent = <&intc>;
++			interrupts = <0x0 0x2>;
++			reg = <0x41c00000 0x10000>;
++			xlnx,count-width = <0x20>;
++			xlnx,one-timer-only = <0x0>;
++		};
++
++		/*
++		 * The second AXI Timer.  Channel 0 is used to raise a software
++		 * interrupt, since the interrupt controller cannot raise one
++		 * once hardware interrupts are enabled.
++		 */
++		timer@41c10000 {
++			clock-frequency = <0x5f5e100>;
++			compatible = "xlnx,axi-timer-2.0", "xlnx,xps-timer-1.00.a";
++			interrupt-parent = <&intc>;
++			interrupts = <0x6 0x2>;
++			reg = <0x41c10000 0x10000>;
++			xlnx,count-width = <0x20>;
++			xlnx,one-timer-only = <0x0>;
++		};
++
++		/* The console device */
++		serial@40600000 {
++			clock-frequency = <0x5f5e100>;
++			compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
++			current-speed = <0x1c200>;
++			device_type = "serial";
++			interrupt-parent = <&intc>;
++			interrupts = <0x1 0x1>;
++			port-number = <0x0>;
++			reg = <0x40600000 0x10000>;
++			xlnx,baudrate = <0x1c200>;
++			xlnx,data-bits = <0x8>;
++			xlnx,use-parity = <0x0>;
++		};
++
++		/*
++		 * The 16550 UART.  The reg property is the base address of the
++		 * IP; the 16550 register block itself sits at reg-offset into
++		 * it, with the registers spaced 1 << reg-shift bytes apart.
++		 * The machine maps it accordingly at 0x44a11000.
++		 */
++		serial@44a10000 {
++			clock-frequency = <0x5f5e100>;
++			compatible = "xlnx,xps-uart16550-2.00.a", "ns16550a";
++			current-speed = <0x1c200>;
++			device_type = "serial";
++			interrupt-parent = <&intc>;
++			interrupts = <0x4 0x2>;
++			port-number = <0x1>;
++			reg = <0x44a10000 0x10000>;
++			reg-offset = <0x1000>;
++			reg-shift = <0x2>;
++		};
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	aliases {
++		serial0 = "/amba_pl/serial@40600000";
++		serial1 = "/amba_pl/serial@44a10000";
++	};
++
++	memory@80000000 {
++		device_type = "memory";
++		reg = <0x80000000 0x10000000>;
++	};
++};
+diff --git a/spec/build/bsps/riscv/mbv/obj.yml b/spec/build/bsps/riscv/mbv/obj.yml
+index 06dbfa1150..ae0a746c66 100644
+--- a/spec/build/bsps/riscv/mbv/obj.yml
++++ b/spec/build/bsps/riscv/mbv/obj.yml
+@@ -12,6 +12,9 @@ install:
+   source:
+   - bsps/riscv/mbv/include/bsp.h
+   - bsps/riscv/mbv/include/tm27.h
++- destination: ${BSP_INCLUDEDIR}/mbv
++  source:
++  - bsps/riscv/mbv/dts/amd-microblaze-v-generic.dts
+ - destination: ${BSP_INCLUDEDIR}/bsp
+   source:
+   - bsps/riscv/mbv/include/bsp/irq.h
+-- 
+2.39.5 (Apple Git-154)
+
+
+From 449635c3f7bd42afce4687fff8d29260bf68521d Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Wed, 29 Jul 2026 22:23:39 -0400
+Subject: [PATCH 2/2] bsps/riscv/mbv: Reject out-of-range device tree interrupt
+ numbers
+
+BSP_INTERRUPT_VECTOR_COUNT is one of the two things which cannot follow the
+device tree:  the generic interrupt support sizes its static handler table
+with it and its header refuses to compile without it.  A device tree which
+puts a device on an interrupt controller input the BSP has no vector for
+therefore cannot be honoured; letting the number through would make the
+interrupt dispatch index past the end of that table.
+
+Reject such a number and keep the value of the build option, which is wrong
+but bounded, and report it.  Also report an interrupt controller which
+declares more inputs through xlnx,num-intr-inputs than the BSP supports,
+which is the same problem seen from the controller rather than the device.
+
+Both are reported and neither is fatal.  This runs at
+RTEMS_SYSINIT_BSP_EARLY, long before the console driver exists, so a fatal
+error here would present as an unexplained hang with nothing on the wire.
+printk() works at this point because BSP_output_char drives the UART Lite
+in polled mode with no initialization.
+
+Every other value from the device tree is taken silently.  There is nothing
+to compare a base address or a clock frequency against, and a mismatch with
+the build option is the entire point of the exercise.
+
+Both BSPs: 517 PASS / 24 XFAIL / 2 XFAIL-KNOWN / 0 FAIL on QEMU 10.2.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ bsps/riscv/mbv/start/mbv-fdt.c | 71 ++++++++++++++++++++++++++++++----
+ 1 file changed, 63 insertions(+), 8 deletions(-)
+
+diff --git a/bsps/riscv/mbv/start/mbv-fdt.c b/bsps/riscv/mbv/start/mbv-fdt.c
+index 77fd933fc6..3308ee38ed 100644
+--- a/bsps/riscv/mbv/start/mbv-fdt.c
++++ b/bsps/riscv/mbv/start/mbv-fdt.c
+@@ -39,8 +39,10 @@
+ #include <bsp/mbv.h>
+ 
+ #include <rtems.h>
++#include <rtems/bspIo.h>
+ #include <rtems/sysinit.h>
+ 
++#include <inttypes.h>
+ #include <string.h>
+ #include <sys/param.h>
+ 
+@@ -315,18 +317,56 @@ static uint32_t mbv_fdt_u32(
+   return fdt32_ld( (const fdt32_t *) val );
+ }
+ 
+-/*
++/**
++ * @brief Returns the interrupt controller input of the node.
++ *
+  * The interrupt parent of every peripheral is the AXI Interrupt Controller,
+  * which uses two interrupt cells.  The first is the controller input, the
+  * second the kind of interrupt, which the BSP takes from the kind-of-intr
+  * property of the controller itself instead.
++ *
++ * An input the BSP has no vector for is rejected.  The vector count is a
++ * compile time constant, since the generic interrupt support sizes its handler
++ * table with it, so honouring such an input would make the interrupt dispatch
++ * index past the end of that table.  Rejecting it leaves the device on the
++ * input the build option names, which is wrong but bounded.
++ *
++ * This is only reported and never fatal.  It runs before the console driver
++ * exists, so a fatal error here would be an unexplained hang.
++ *
++ * @return The interrupt controller input, or @a fallback.
+  */
+-#define mbv_fdt_irq( fdt, node, fallback ) \
+-  mbv_fdt_u32( fdt, node, "interrupts", fallback )
++static uint32_t mbv_fdt_irq(
++  const void *fdt,
++  int         node,
++  const char *what,
++  uint32_t    fallback
++)
++{
++  uint32_t irq;
++
++  irq = mbv_fdt_u32( fdt, node, "interrupts", fallback );
++
++  if ( irq >= MBV_MAXIMUM_EXTERNAL_INTERRUPTS ) {
++    printk(
++      "mbv: device tree puts the %s on interrupt controller input %" PRIu32
++        ", but only %u inputs are supported, using %" PRIu32 "\n",
++      what,
++      irq,
++      (unsigned int) MBV_MAXIMUM_EXTERNAL_INTERRUPTS,
++      fallback
++    );
++
++    return fallback;
++  }
++
++  return irq;
++}
+ 
+ static void mbv_fdt_configure( const void *fdt )
+ {
+-  int node;
++  uint32_t inputs;
++  int      node;
+ 
+   node = mbv_fdt_find( fdt, MBV_FDT_INTC_COMPATIBLE, 0 );
+ 
+@@ -341,6 +381,17 @@ static void mbv_fdt_configure( const void *fdt )
+       "xlnx,kind-of-intr",
+       mbv_cfg.intc_kind_of_edge
+     );
++
++    inputs = mbv_fdt_u32( fdt, node, "xlnx,num-intr-inputs", 0 );
++
++    if ( inputs > MBV_MAXIMUM_EXTERNAL_INTERRUPTS ) {
++      printk(
++        "mbv: device tree interrupt controller has %" PRIu32 " inputs, but "
++          "only %u are supported\n",
++        inputs,
++        (unsigned int) MBV_MAXIMUM_EXTERNAL_INTERRUPTS
++      );
++    }
+   }
+ 
+   /*
+@@ -363,7 +414,8 @@ static void mbv_fdt_configure( const void *fdt )
+       "clock-frequency",
+       mbv_cfg.timer_frequency
+     );
+-    mbv_cfg.timer_irq = mbv_fdt_irq( fdt, node, mbv_cfg.timer_irq );
++    mbv_cfg.timer_irq =
++      mbv_fdt_irq( fdt, node, "clock tick timer", mbv_cfg.timer_irq );
+   }
+ 
+   node = mbv_fdt_find( fdt, MBV_FDT_TIMER_COMPATIBLE, 1 );
+@@ -373,14 +425,16 @@ static void mbv_fdt_configure( const void *fdt )
+       Microblaze_Timer,
+       mbv_fdt_reg( fdt, node, (uintptr_t) mbv_cfg.timer_2 )
+     );
+-    mbv_cfg.timer_2_irq = mbv_fdt_irq( fdt, node, mbv_cfg.timer_2_irq );
++    mbv_cfg.timer_2_irq =
++      mbv_fdt_irq( fdt, node, "second timer", mbv_cfg.timer_2_irq );
+   }
+ 
+   node = mbv_fdt_find( fdt, MBV_FDT_UARTLITE_COMPATIBLE, 0 );
+ 
+   if ( node >= 0 ) {
+     mbv_cfg.uart_base = mbv_fdt_reg( fdt, node, mbv_cfg.uart_base );
+-    mbv_cfg.uart_irq = mbv_fdt_irq( fdt, node, mbv_cfg.uart_irq );
++    mbv_cfg.uart_irq =
++      mbv_fdt_irq( fdt, node, "UART Lite", mbv_cfg.uart_irq );
+   }
+ 
+   /*
+@@ -400,7 +454,8 @@ static void mbv_fdt_configure( const void *fdt )
+         base + mbv_fdt_u32( fdt, node, "reg-offset", 0x1000 );
+     }
+ 
+-    mbv_cfg.uart_16550_irq = mbv_fdt_irq( fdt, node, mbv_cfg.uart_16550_irq );
++    mbv_cfg.uart_16550_irq =
++      mbv_fdt_irq( fdt, node, "16550 UART", mbv_cfg.uart_16550_irq );
+   }
+ }
+ 
+-- 
+2.39.5 (Apple Git-154)
+

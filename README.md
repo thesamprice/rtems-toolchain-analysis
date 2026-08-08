@@ -12,6 +12,7 @@ work needed to do the equivalent in LLVM/Clang.
 | [03](03-rtems-side-clang-support.md) | **What RTEMS already has for Clang** — the 2020 scaffolding, and what Clang does with an RTEMS triple today |
 | [04](04-llvm-gap-analysis.md) | **What it would take to support RTEMS in LLVM** — the gap, work items, sizes |
 | [05](05-clang-riscv-bringup.md) | **Building RTEMS for RISC-V with Clang** — the experiment, and the twelve things that broke |
+| [06](06-libdl-and-lld.md) | **Getting the `dl` tests working** — a TLS model mismatch, and where lld and GNU ld disagree |
 | [`patches/`](patches/) | The three real fixes: one Clang, two RTEMS |
 | [`repro/`](repro/) | The `config.ini` carrying the remaining workarounds |
 | [`results/`](results/) | Raw QEMU testsuite output |
