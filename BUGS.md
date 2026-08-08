@@ -79,7 +79,7 @@ under Clang (previously 6 failing) **and** under GCC (no regression).
 - `TheSamPrice/rtems` branch **`fix/lseek-overflow-ub`** @ `20c0692327`
 - This is a latent bug in upstream RTEMS regardless of compiler — worth reporting on its own.
 
-### F6 — Clang's default TLS model is wrong for RTEMS *(worked around)*
+### F6 — Clang's default TLS model is wrong for RTEMS *(now fixed properly)*
 
 `dl11` failed with `Unsupported relocation type 21` — `R_RISCV_TLS_GOT_HI20`. RTEMS uses static
 TLS and its RISC-V `libdl` implements only the `TPREL` (local-exec) forms:
@@ -91,8 +91,23 @@ gcc:    R_RISCV_TPREL_HI20 / _ADD / _LO12_I      (local-exec)
 
 `-ftls-model=local-exec` makes Clang emit relocations identical to GCC's; `dl11` and `dl12` pass.
 
-**Not fixed properly** — this is a target default that belongs in a Clang RTEMS ToolChain, not in
-every user's `config.ini`.
+> **Resolved, and the reasoning above is partly wrong.** This is not a *Clang* target default
+> problem. Retested: clang makes the same conservative choice for `riscv32-unknown-elf` and
+> `riscv32-unknown-linux-gnu`, because an extern thread-local could come from a shared object, and
+> the IR carries no `dso_local`. Nor does lld relax it away — the linked base image still loads the
+> offset from a GOT, which works.
+>
+> The breakage is confined to **modules loaded by libdl**, which are relocated at run time with no
+> linker involved, and RTEMS's RISC-V back end implements only the TPREL forms. It handles
+> `R_RISCV_GOT_HI20` but not `R_RISCV_TLS_GOT_HI20`, hence "Unsupported relocation type 21".
+>
+> So the constraint is RTEMS's, expressed by what its run-time loader implements, and RTEMS's own
+> clang option spec is the right home for the flag — not a ToolChain, and not every user's
+> `config.ini`. Moved to `spec/build/cpukit/optclang.yml`; see
+> [`patches/rtems/0012-...`](patches/rtems/). One fewer `config.ini` workaround.
+>
+> The other repair would be to teach the RISC-V back end the TLS GOT relocation, which is a larger
+> change and still would not make initial-exec the right model for a static RTOS.
 
 ### F7 — RTEMS: write into a `const` buffer in `rtems_ofw_node_status()`
 
