@@ -38,28 +38,44 @@ are explained in the next section; five are artifacts of how the tests are run a
 These were originally recorded as "probably timeouts, not chased". They have now been run through
 RTEMS's own `rtems-test` — there was no BSP configuration for `riscv/mbv`, so one was written and
 is included in [`patches/rtems-tools/0002-...`](patches/rtems-tools/). Raw log in
-[`results/rtems-test-seven-shared-failures.log`](results/).
+[`results/`](results/).
 
-| test | `rtems-test` | explanation |
-|---|---|---|
-| `cpuuse` | **passed** | long-running; truncated by the runner's 25 s cap |
-| `sp04` | **passed** | same |
-| `spcontext01` | **passed** | same, cut mid `Test configuration F F N...` |
-| `tmfine01` | **passed** | timing benchmark, cut mid-JSON |
-| `sptimecounter03` | timeout | not a hang — see below |
-| `dl06` | timeout | **real failure**: `dlopen failed: global symbol not found: _tls_rand48_add` |
-| `ttest01` | timeout | **real failure**: aborts at `test-malloc.c:75` in `zalloc_auto` |
+Both build trees were run through it, because the point of the exercise is whether the two
+compilers behave the same:
 
-So four of the seven were purely an artifact of the runner's timeout and pass under a longer one.
+| test | clang | gcc | explanation |
+|---|---|---|---|
+| `cpuuse` | **passed** | **passed** | long-running; truncated by the runner's 25 s cap |
+| `sp04` | **passed** | **passed** | same |
+| `spcontext01` | **passed** | **passed** | same, cut mid `Test configuration F F N...` |
+| `tmfine01` | **passed** | **passed** | same, timing benchmark cut mid-JSON |
+| `sptimecounter03` | timeout | **passed** | neither — the test is flaky under load, see below |
+| `dl06` | timeout | timeout | **real failure**: `dlopen failed: global symbol not found: _tls_rand48_add` |
+| `ttest01` | timeout | timeout | **real failure**: aborts at `test-malloc.c:75` in `zalloc_auto` |
 
-**`sptimecounter03` is not a hang either.** `test_binuptime_init()` returns
-`10 * rtems_clock_get_ticks_per_second()`, so the job spins for **ten seconds of guest time** with
-no output between `TEST_BEGIN` and `TEST_END`. Under `-icount shift=0,sleep=off` — which the
-runner uses for determinism — ten guest seconds cost far more than ten wall seconds, so it
-exceeded every timeout used. Run without `-icount` it reaches `*** END OF TEST ***` normally. It is
-a slow test, not a failing one.
+Four of the seven were purely an artifact of the runner's 25-second cap and pass under a longer
+one, on both compilers.
 
-**`dl06` and `ttest01` are genuine failures, on both compilers.** `dl06` is the last of the O1
+**`sptimecounter03` is not a hang, and the one divergent cell above is not a compiler difference.**
+`test_binuptime_init()` returns `10 * rtems_clock_get_ticks_per_second()`, so the job spins for
+**ten seconds of guest time** emitting nothing at all between `TEST_BEGIN` and `TEST_END`. Under
+`-icount shift=0,sleep=off` — which the runner uses for determinism — ten guest seconds cost far
+more than ten wall seconds. The tester's timeout is inactivity-based, so a test that is silent for
+its entire duration sits right on the boundary and can fall either way depending on how many other
+QEMU instances are competing for CPU.
+
+Measured directly, both binaries run concurrently so they see identical load:
+
+```
+clang: 45s   gcc: 50s   (to *** END OF TEST ***, -icount as configured)
+```
+
+Both pass; clang is marginally faster. The single `timeout` in the table is scheduling noise from
+running seven `sleep=off` QEMU instances at once, not a property of either toolchain. Run alone
+without `-icount` the clang binary reaches `*** END OF TEST ***` in seconds.
+
+**`dl06` and `ttest01` are genuine failures, and `rtems-test` reports them identically for both
+compilers.** `dl06` is the last of the O1
 class: a TLS symbol, `_tls_rand48_add`, that is not forced into the libdl base image. `ttest01`
 aborts inside the test framework's own malloc test. Both produce byte-identical output under GCC
 and Clang, so neither is a toolchain difference — they are RTEMS issues on this BSP, and both are

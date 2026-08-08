@@ -126,10 +126,13 @@ result files is empty.
 | Clang | 633 | 25 | 9 | 7 |
 
 The seven remaining failures fail identically under GCC. **Parity means matching, not zero** — and
-they are now explained rather than assumed. Run through RTEMS's own `rtems-test`, four of the seven
-pass outright and were only ever artifacts of the runner's 25-second cap; `sptimecounter03` is a
-ten-guest-second test made very slow by `-icount`, not a hang; and `dl06` and `ttest01` are genuine
-RTEMS failures with byte-identical output under both compilers.
+they are now explained rather than assumed. **Both** build trees were run through RTEMS's own
+`rtems-test`: four of the seven pass outright on both compilers and were only ever artifacts of the
+runner's 25-second cap; `sptimecounter03` is a ten-guest-second test that emits nothing for its
+whole duration, so against an inactivity-based timeout it is flaky under parallel load rather than
+failing — measured concurrently it takes 45 s under clang and 50 s under GCC, and both reach
+`END OF TEST`; and `dl06` and `ttest01` are genuine RTEMS failures with byte-identical output under
+both compilers.
 
 Doing that turned up a structural problem worth knowing about: **the `amd-microblaze-v-generic`
 machine does not terminate QEMU when RTEMS shuts down**, so `rtems-test` cannot tell a test that

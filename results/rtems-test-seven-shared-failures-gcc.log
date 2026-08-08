@@ -1,0 +1,355 @@
+RTEMS Testing - Tester, 7.0.not_released
+ Command Line: <home>/rtems/7/bin/rtems-test --rtems-bsp=mbv_qemu --timeout=150 --log-mode=all --jobs=7 --log=<scratch>/seven-gcc.log <scratch>/wt-lseek/build/riscv/mbv/testsuites/libtests/cpuuse.exe <scratch>/wt-lseek/build/riscv/mbv/testsuites/libtests/dl06.exe <scratch>/wt-lseek/build/riscv/mbv/testsuites/sptests/sp04.exe <scratch>/wt-lseek/build/riscv/mbv/testsuites/sptests/spcontext01.exe <scratch>/wt-lseek/build/riscv/mbv/testsuites/sptests/sptimecounter03.exe <scratch>/wt-lseek/build/riscv/mbv/testsuites/tmtests/tmfine01.exe <scratch>/wt-lseek/build/riscv/mbv/testsuites/libtests/ttest01.exe
+ Host: Darwin samuels-macbook-pro.tail67cb07.ts.net 24.5.0 Darwin Kernel Version 24.5.0: Tue Apr 22 19:54:49 PDT 2025; root:xnu-11417.121.6~2/RELEASE_ARM64_T6000 arm64
+ Python: 3.11.13 (main, Jun  6 2025, 23:28:53) [Clang 16.0.0 (clang-1600.0.26.6)]
+Host: macOS-15.5-arm64-arm-64bit (Darwin samuels-macbook-pro.tail67cb07.ts.net 24.5.0 Darwin Kernel Version 24.5.0: Tue Apr 22 19:54:49 PDT 2025; root:xnu-11417.121.6~2/RELEASE_ARM64_T6000 arm64 arm)
+[1/7] p:1 f:0 u:0 e:0 I:0 B:0 t:2 L:0 i:0 W:0 | E p.....t.... o:   74 p:658.497 | riscv32/mbv_qemu: cpuuse.exe
+Result: passed    
+Time: 0:10:58.496524 cpuuse.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-lseek/build/riscv/mbv/testsuites/libtests/cpuuse.exe,cpu-num=0
+] 
+] 
+=>  test start: CPUUSE
+] *** BEGIN OF TEST CPUUSE ***
+] *** TEST VERSION: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] TA1 - rtems_task_suspend - on Task 2
+] TA1 - rtems_task_suspend - on Task 3
+] TA1 - killing time
+] TA1 - rtems_task_resume - on Task 2
+] TA1 - rtems_task_resume - on Task 3
+] TA1 - rtems_task_mode - change mode to NO RTEMS_PREEMPT
+] TA1 - 09:15:09   12/31/1988
+] TA1 - 09:15:10   12/31/1988
+] TA1 - 09:15:11   12/31/1988
+] TA1 - 09:15:12   12/31/1988
+] TA1 - 09:15:13   12/31/1988
+] TA1 - 09:15:14   12/31/1988
+] TA1 - rtems_task_mode - change mode to RTEMS_PREEMPT
+] TA1 - 09:15:00   12/31/1988
+] TA2 - 09:15:03   12/31/1988
+] TA3 - 09:15:04   12/31/1988
+] TA1 - 09:15:05   12/31/1988
+] TA2 - 09:15:06   12/31/1988
+] TA3 - 09:15:07   12/31/1988
+] TA1 - 09:15:08   12/31/1988
+] TA2 - 09:15:14   12/31/1988
+] TA3 - 09:15:15   12/31/1988
+] TA1 - 09:15:16   12/31/1988
+] TA2 - 09:15:17   12/31/1988
+] 
+] -------------------------------------------------------------------------------
+]                               CPU USAGE BY THREAD
+] ------------+----------------------------------------+---------------+---------
+]  ID         | NAME                                   | SECONDS       | PERCENT
+] ------------+----------------------------------------+---------------+---------
+]  0x09010001 | IDLE                                   |      1.000001 |   5.263
+]  0x0a010001 | UI1                                    |      0.000018 |   0.000
+]  0x0a010002 | TA1                                    |     11.999980 |  63.157
+]  0x0a010003 | TA2                                    |      3.000068 |  15.789
+]  0x0a010004 | TA3                                    |      3.000000 |  15.789
+] ------------+----------------------------------------+---------------+---------
+]  TIME SINCE LAST CPU USAGE RESET IN SECONDS:                         19.000074
+] -------------------------------------------------------------------------------
+] 
+] TA2 - RESETTING USAGE STATISTICS
+] 
+] -------------------------------------------------------------------------------
+]                               CPU USAGE BY THREAD
+] ------------+----------------------------------------+---------------+---------
+]  ID         | NAME                                   | SECONDS       | PERCENT
+] ------------+----------------------------------------+---------------+---------
+]  0x09010001 | IDLE                                   |      0.000000 |   0.000
+]  0x0a010001 | UI1                                    |      0.000000 |   0.000
+]  0x0a010002 | TA1                                    |      0.000000 |   0.000
+]  0x0a010003 | TA2                                    |      0.000023 |  98.434
+]  0x0a010004 | TA3                                    |      0.000000 |   0.000
+] ------------+----------------------------------------+---------------+---------
+]  TIME SINCE LAST CPU USAGE RESET IN SECONDS:                          0.000029
+] -------------------------------------------------------------------------------
+] 
+] 
+] *** END OF TEST CPUUSE ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] RTEMS tools: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] executing thread ID: 0x0a010003
+] executing thread name: TA2 
+] *** TIMEOUT TIMEOUT
+[2/7] p:1 f:0 u:0 e:0 I:0 B:0 t:2 L:0 i:0 W:0 | E ........... o:   19 p:614.931 | riscv32/mbv_qemu: dl06.exe
+Result: timeout   
+Time: 0:10:14.930874 dl06.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-lseek/build/riscv/mbv/testsuites/libtests/dl06.exe,cpu-num=0
+] 
+] 
+=>  test start: libdl (RTL) 6
+] *** BEGIN OF TEST libdl (RTL) 6 ***
+] *** TEST VERSION: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] 
+] load: /dl06.rap
+] dlopen failed: global symbol not found: _tls_rand48_add
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] RTEMS tools: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+[3/7] p:1 f:0 u:0 e:0 I:0 B:0 t:2 L:0 i:0 W:0 | E ........... o:   30 p:615.188 | riscv32/mbv_qemu: ttest01.exe
+Result: timeout   
+Time: 0:10:15.188321 ttest01.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-lseek/build/riscv/mbv/testsuites/libtests/ttest01.exe,cpu-num=0
+] 
+] 
+=>  test start: TTEST 1
+] *** BEGIN OF TEST TTEST 1 ***
+] *** TEST VERSION: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] A:ttest01
+] S:Platform:RTEMS
+] S:Compiler:*
+] S:Version:*
+] S:BSP:*
+] S:BuildLabel:*
+] S:TargetHash:SHA256:*
+] S:RTEMS_DEBUG:*
+] S:RTEMS_MULTIPROCESSING:*
+] S:RTEMS_POSIX_API:*
+] S:RTEMS_PROFILING:*
+] S:RTEMS_SMP:*
+] B:zalloc_auto
+] P:0:0:UI1:test-malloc.c:3FAILED:75:*ctx->c == c
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] RTEMS tools: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+[4/7] p:2 f:0 u:0 e:0 I:0 B:0 t:2 L:0 i:0 W:0 | E p.......... o:   43 p:659.017 | riscv32/mbv_qemu: sp04.exe
+Result: passed    
+Time: 0:10:59.017494 sp04.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-lseek/build/riscv/mbv/testsuites/sptests/sp04.exe,cpu-num=0
+] 
+] 
+=>  test start: SP 4
+] *** BEGIN OF TEST SP 4 ***
+] *** TEST VERSION: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] TA1 - rtems_task_suspend - on Task 2
+] TA1 - rtems_task_suspend - on Task 3
+] TA1 - killing time
+] TA1 - rtems_task_resume - on Task 2
+] TA1 - rtems_task_resume - on Task 3
+] TA1 - rtems_task_mode - change mode to NO RTEMS_PREEMPT
+] TA1 - 09:15:09   12/31/1988
+] TA1 - 09:15:10   12/31/1988
+] TA1 - 09:15:11   12/31/1988
+] TA1 - 09:15:12   12/31/1988
+] TA1 - 09:15:13   12/31/1988
+] TA1 - 09:15:14   12/31/1988
+] TA1 - rtems_task_mode - change mode to RTEMS_PREEMPT
+] TA1 - 09:15:00   12/31/1988
+] TA2 - 09:15:03   12/31/1988
+] TA3 - 09:15:04   12/31/1988
+] TA1 - 09:15:05   12/31/1988
+] TA2 - 09:15:06   12/31/1988
+] TA3 - 09:15:07   12/31/1988
+] TA1 - 09:15:08   12/31/1988
+] TA2 - 09:15:14   12/31/1988
+] TA3 - 09:15:15   12/31/1988
+] TA1 - 09:15:16   12/31/1988
+] TA1 - rtems_extension_delete - successful
+] 
+] *** END OF TEST SP 4 ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] RTEMS tools: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] executing thread ID: 0x0a010002
+] executing thread name: TA1 
+] *** TIMEOUT TIMEOUT
+[5/7] p:3 f:0 u:0 e:0 I:0 B:0 t:2 L:0 i:0 W:0 | E p.......... o:   27 p:671.517 | riscv32/mbv_qemu: spcontext01.exe
+Result: passed    
+Time: 0:11:11.517238 spcontext01.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-lseek/build/riscv/mbv/testsuites/sptests/spcontext01.exe,cpu-num=0
+] 
+] 
+=>  test start: SPCONTEXT 1
+] *** BEGIN OF TEST SPCONTEXT 1 ***
+] *** TEST VERSION: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] Test configuration N N N... done
+] Test configuration N N F... done
+] Test configuration N F N... done
+] Test configuration N F F... done
+] Test configuration F N N... done
+] Test configuration F N F... done
+] Test configuration F F N... done
+] Test configuration F F F... done
+] 
+] *** END OF TEST SPCONTEXT 1 ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] RTEMS tools: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+[6/7] p:5 f:0 u:0 e:0 I:0 B:0 t:2 L:0 i:0 W:0 | E p.......... o:   19 p:699.711 | riscv32/mbv_qemu: sptimecounter03.exe
+Result: passed    
+Time: 0:11:39.711317 sptimecounter03.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-lseek/build/riscv/mbv/testsuites/sptests/sptimecounter03.exe,cpu-num=0
+] 
+] 
+=>  test start: SPTIMECOUNTER 3
+] *** BEGIN OF TEST SPTIMECOUNTER 3 ***
+] *** TEST VERSION: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] 
+] *** END OF TEST SPTIMECOUNTER 3 ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] RTEMS tools: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+[7/7] p:5 f:0 u:0 e:0 I:0 B:0 t:2 L:0 i:0 W:0 | E ........... o:   96 p:692.831 | riscv32/mbv_qemu: tmfine01.exe
+Result: passed    
+Time: 0:11:32.831057 tmfine01.exe
+=>  exe: qemu-system-riscv32 -M amd-microblaze-v-generic -m 256m -no-reboot -icount shift=0,sleep=off -display none -monitor none -serial stdio -device loader,file=<scratch>/wt-lseek/build/riscv/mbv/testsuites/tmtests/tmfine01.exe,cpu-num=0
+] 
+] 
+=>  test start: TMFINE 1
+] *** BEGIN OF TEST TMFINE 1 ***
+] *** TEST VERSION: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] *** TEST STATE: EXPECTED_PASS
+] *** TEST BUILD:
+] *** TEST TOOLS: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] *** BEGIN OF JSON DATA ***
+] [
+]   {
+]     "type": "event",
+]     "description": "Send Event to Self",
+]     "counter": [
+]       [9433398]
+]     ]
+]   }, {
+]     "type": "event",
+]     "description": "Send Event to One",
+]     "counter": [
+]       [9173869]
+]     ]
+]   }, {
+]     "type": "contested-mutex",
+]     "description": "Obtain/Release Contested Classic Inheritance Mutex",
+]     "counter": [
+]       [8849130]
+]     ]
+]   }, {
+]     "type": "message",
+]     "description": "Send Message to Self",
+]     "counter": [
+]       [3401193]
+]     ]
+]   }, {
+]     "type": "message",
+]     "description": "Send Message to One Receiver",
+]     "counter": [
+]       [3389666]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Pthread Spinlock",
+]     "counter": [
+]       [62496957]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private <sys/lock.h> Mutex",
+]     "counter": [
+]       [39998034]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Pthread Inheritance Mutex",
+]     "counter": [
+]       [12499384]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Classic Inheritance Mutex",
+]     "counter": [
+]       [8849119]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Pthread Ceiling Mutex",
+]     "counter": [
+]       [1430545]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Classic Ceiling Mutex",
+]     "counter": [
+]       [1381147]
+]     ]
+]   }, {
+]     "type": "private-mutex",
+]     "description": "Obtain/Release Private Classic MrsP Mutex",
+]     "counter": [
+]       [1381147]
+]     ]
+]   }
+] ]
+] *** END OF JSON DATA ***
+] 
+] *** END OF TEST TMFINE 1 ***
+] 
+] 
+] [ RTEMS shutdown ]
+] RTEMS version: 7.0.0.999d803aa287a53fc45e51df99ee39d4685b39f9
+] RTEMS tools: 15.2.0 20250808 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+] executing thread ID: 0x0a010001
+] executing thread name: UI1 
+] *** TIMEOUT TIMEOUT
+
+Passed:        5
+Failed:        0
+User Input:    0
+Expected Fail: 0
+Indeterminate: 0
+Benchmark:     0
+Timeout:       2
+Test too long: 0
+Invalid:       0
+Wrong Version: 0
+Wrong Build:   0
+Wrong Tools:   0
+Wrong Header:  0
+----------------
+Total:         7
+Timeouts:
+ dl06.exe
+ ttest01.exe
+Average test time: 0:01:39.997780
+Testing time     : 0:11:39.984458
