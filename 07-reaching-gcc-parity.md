@@ -27,10 +27,26 @@ only form of this claim worth making.
 
 | | PASS | XFAIL | SKIP | FAIL | total |
 |---|---:|---:|---:|---:|---:|
-| GCC | 633 | 25 | 9 | 7 | 674 |
-| Clang | 633 | 25 | 9 | 7 | 674 |
+| GCC | 634 | 25 | 9 | 6 | 674 |
+| Clang | 634 | 25 | 9 | 6 | 674 |
 
-The seven remaining failures fail identically under GCC. **Parity means matching, not zero.** They
+Both trees carry the same BSP configuration, are run by the same script with the same timeout, and
+the two results files are **byte-identical** — checked with `cmp`, not `diff`, for a reason given
+below. Files: [`results/clang-riscv-mbv-parity-clang-final.txt`](results/) and
+[`results/clang-riscv-mbv-parity-gcc-final.txt`](results/).
+
+> An earlier revision of this document reported 633/7 for both. That was also byte-identical and
+> also correct, but it was measured before the QEMU exit device existed, when tests were slower to
+> release and `cpuuse` — which takes 18.1 s on its own — was being truncated by the runner's cap on
+> both sides. With the exit device it passes for both compilers. The delta between the two columns
+> was zero before and is zero now; what changed is that one test stopped being cut off.
+>
+> A methodological note worth recording: these comparisons were originally made with
+> `diff a b >/dev/null && echo identical`. In this environment `diff` is wrapped by a tool that can
+> return success regardless, so that idiom silently proves nothing. Every published comparison was
+> re-checked with `cmp` and all of them held, but the method was unsound. Use `cmp` for this.
+
+The remaining failures fail identically under GCC. **Parity means matching, not zero.** They
 are explained in the next section; five are artifacts of how the tests are run and two are real.
 
 ## The seven shared failures

@@ -122,8 +122,11 @@ result files is empty.
 
 | | PASS | XFAIL | SKIP | FAIL |
 |---|---:|---:|---:|---:|
-| GCC | 633 | 25 | 9 | 7 |
-| Clang | 633 | 25 | 9 | 7 |
+| GCC | 634 | 25 | 9 | 6 |
+| Clang | 634 | 25 | 9 | 6 |
+
+Both columns come from trees carrying the same BSP configuration, run by the same script, and the
+two results files are byte-identical.
 
 The seven remaining failures fail identically under GCC. **Parity means matching, not zero** — and
 they are now explained rather than assumed. **Both** build trees were run through RTEMS's own

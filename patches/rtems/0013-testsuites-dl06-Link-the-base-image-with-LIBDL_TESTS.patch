@@ -1,0 +1,64 @@
+From b8f804a117f7f3cfed6acea3f489bc28e8c2a871 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 15:36:08 -0400
+Subject: [PATCH] testsuites/dl06: Link the base image with LIBDL_TESTS_LDFLAGS
+
+dl06 failed with
+
+  dlopen failed: global symbol not found: _tls_rand48_add
+
+dl06-o2.c calls lcong48(), so the loaded module needs newlib's rand48
+thread-local state.  Nothing in the base image references it, so the
+archive member is never pulled in, the symbol never reaches the global
+symbol table rtems-syms generates, and the module cannot be resolved.
+
+dl06.yml carried an empty ldflags list where dl07, dl08 and dl09 all pass
+${LIBDL_TESTS_LDFLAGS}, so the mechanism for forcing such symbols in was
+simply never wired up for this test.  Wire it up, and add the three rand48
+thread-local symbols to the list.
+
+This fails identically under GCC, so it is not compiler specific.
+
+dl06 still fails, now for an unrelated reason further along: rtems-ld
+produces a .rap the loader rejects with "offset past end of file", and
+rtems-rap cannot read it either, reporting "compression: Reading of value
+failed".  That reproduces with the stock RSB-built rtems-ld, so it is a
+pre-existing bug this fix merely uncovers.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ spec/build/testsuites/libtests/dl06.yml         | 3 ++-
+ spec/build/testsuites/libtests/optdlldflags.yml | 3 +++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/spec/build/testsuites/libtests/dl06.yml b/spec/build/testsuites/libtests/dl06.yml
+index 59c738c33e..88255d095e 100644
+--- a/spec/build/testsuites/libtests/dl06.yml
++++ b/spec/build/testsuites/libtests/dl06.yml
+@@ -39,7 +39,8 @@ enabled-by:
+   - BUILD_LIBDL
+ includes:
+ - testsuites/libtests/dl06
+-ldflags: []
++ldflags:
++- ${LIBDL_TESTS_LDFLAGS}
+ links: []
+ prepare-build: null
+ prepare-configure: null
+diff --git a/spec/build/testsuites/libtests/optdlldflags.yml b/spec/build/testsuites/libtests/optdlldflags.yml
+index 0c94332f6d..e935e999fe 100644
+--- a/spec/build/testsuites/libtests/optdlldflags.yml
++++ b/spec/build/testsuites/libtests/optdlldflags.yml
+@@ -15,6 +15,9 @@ default:
+   - -u__muldf3
+   - -u__eqdf2
+   - -u__fixdfsi
++  - -u_tls_rand48_add
++  - -u_tls_rand48_mult
++  - -u_tls_rand48_seed
+ - enabled-by: true
+   value: []
+ description: |
+-- 
+2.39.5 (Apple Git-154)
+
