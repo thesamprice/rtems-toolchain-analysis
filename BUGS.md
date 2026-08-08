@@ -154,6 +154,65 @@ The warnings are legitimate and the code is correct. Left alone deliberately —
 code to silence a warning carries more risk than it removes. Recorded here so the next person does
 not re-triage it.
 
+### F11 — RTEMS never runs global constructors under Clang
+
+**The most consequential bug found.** Fixes `iostream`, `rcxx01`, `spglobalcon02` and `sptls04`.
+
+`_Thread_Global_construction()` and `_exit()` decide whether to run global constructors and
+destructors with:
+
+```c
+#if defined( __USE_INIT_FINI__ )
+```
+
+`__USE_INIT_FINI__` is a **GCC-internal predefine**. Clang does not define it, and does not define
+`__USE__MAIN__` either, so `EXECUTE_GLOBAL_CONSTRUCTORS` is never defined and **RTEMS silently runs
+no C++ static constructor at all**. Nothing then references `__libc_init_array`, so the
+`PROVIDE_HIDDEN` of `__init_array_start`/`__init_array_end` in `linkcmds.base` never fires and
+those symbols are absent from the executable entirely:
+
+```
+gcc-built:    __init_array_start  __init_array_end  __libc_init_array   present
+clang-built:  none of them
+```
+
+The failure mode is not a diagnostic but a crash. The first use of `std::cout` faults loading the
+virtual base offset from an unconstructed stream:
+
+```
+lw a5, 0x0(a1)     # vptr of the ostream
+lw a5, -0xc(a5)    # virtual base offset  ->  load access fault (mcause 0x5)
+```
+
+Clang emits `.init_array` exactly as GCC does, and every RTEMS port already selects the mechanism
+via `CPU_USE_LIBC_INIT_FINI_ARRAY`, so the guard just needs to admit clang. The GCC path is
+byte-for-byte unchanged — verified by rebuilding with GCC and re-running all seven affected tests.
+
+- Branch **`fix/clang-global-constructors`** @ `999d803aa2`
+- A cleaner long-term fix is to stop testing a compiler-internal macro at all, since RTEMS always
+  uses newlib; that is a larger change.
+
+### F12 — `.eh_frame` never registered, so unwinding aborts
+
+Fixes `exit03`, and vindicates the `crt` recommendation from O7 for a different test than the one
+that prompted it.
+
+`exit03` aborted inside `uw_init_context_1` in libgcc's `unwind-dw2.c`. `crtbegin.o` provides
+`frame_dummy`, which is what calls `__register_frame_info` — and workaround #10's `-nostartfiles`
+suppressed `crtbegin.o` along with newlib's stub `crt0.o`.
+
+Adding `crti.o crtbegin.o` before the objects and `crtend.o crtn.o` after fixes it. That is exactly
+what GCC's `-qrtems` spec does:
+
+```
+*startfile:  %{!qrtems:crt0%O%s} %{qrtems:crti%O%s crtbegin%O%s}
+*endfile:    %{qrtems:crtend%O%s crtn%O%s ...}
+```
+
+Still a `config.ini` workaround rather than a patch, because the right home for it is a driver
+ToolChain. Note this is the second time `-nostartfiles` — one blunt flag standing in for one line
+of a GCC spec — has caused a silent runtime failure.
+
 ---
 
 ## Open
@@ -335,7 +394,7 @@ Plus one unresolved link error in the build: **`_TLS_Configuration`**.
 
 | | count |
 |---|---:|
-| Fixed and pushed | 9 (F1–F5, F7–F10, most of O1) |
+| Fixed and pushed | 11 (F1–F5, F7–F12, most of O1) |
 | Worked around, needs a proper home | 1 (F6) |
 | Open, root-caused | 1 (O2) |
 | Open, self-inflicted | 1 (O3) |

@@ -1,0 +1,80 @@
+From 999d803aa287a53fc45e51df99ee39d4685b39f9 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 01:28:57 -0400
+Subject: [PATCH] score: Run global constructors when built with clang
+
+_Thread_Global_construction() and _exit() decide whether to run global
+constructors and destructors with
+
+  #if defined( __USE_INIT_FINI__ )
+
+__USE_INIT_FINI__ is a GCC-internal predefine.  clang does not define it,
+and neither does it define __USE__MAIN__, so EXECUTE_GLOBAL_CONSTRUCTORS
+is never defined and RTEMS silently runs no C++ static constructor at all.
+Nothing references __libc_init_array either, so the PROVIDE_HIDDEN of
+__init_array_start and __init_array_end in linkcmds.base never fires and
+those symbols are absent from the executable entirely.
+
+The failure mode is not a diagnostic but a crash: the first use of
+std::cout faults while loading the virtual base offset from an
+unconstructed stream,
+
+  lw a5, 0x0(a1)      # vptr of the ostream
+  lw a5, -0xc(a5)     # virtual base offset -> load access fault
+
+clang emits .init_array exactly as gcc does, and every RTEMS port already
+selects the mechanism with CPU_USE_LIBC_INIT_FINI_ARRAY, so the guard
+simply needs to admit clang.  The gcc path is byte-for-byte unchanged.
+
+On riscv/mbv built with clang this fixes iostream, rcxx01, spglobalcon02
+and sptls04.  Confirmed by symbol inspection as well: __init_array_start,
+__init_array_end and __libc_init_array are present after the change and
+absent before, matching a gcc-built image.
+
+A cleaner long-term fix would be to stop testing a compiler-internal
+macro altogether, since RTEMS always uses newlib and every port defines
+CPU_USE_LIBC_INIT_FINI_ARRAY, but that is a larger change than this one.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ cpukit/libcsupport/src/newlibc_exit.c | 4 +++-
+ cpukit/score/src/threadhandler.c      | 8 +++++++-
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/cpukit/libcsupport/src/newlibc_exit.c b/cpukit/libcsupport/src/newlibc_exit.c
+index 866232478e..e0994b3f21 100644
+--- a/cpukit/libcsupport/src/newlibc_exit.c
++++ b/cpukit/libcsupport/src/newlibc_exit.c
+@@ -19,7 +19,9 @@
+ #include <stdio.h>
+ #include <unistd.h>
+ 
+-  #if defined( __USE_INIT_FINI__ )
++  /* See the comment in cpukit/score/src/threadhandler.c: __USE_INIT_FINI__ is
++   * a GCC-internal predefine which clang does not define. */
++  #if defined( __USE_INIT_FINI__ ) || defined( __clang__ )
+     #if CPU_USE_LIBC_INIT_FINI_ARRAY == TRUE
+       #define FINI_SYMBOL __libc_fini_array
+     #else
+diff --git a/cpukit/score/src/threadhandler.c b/cpukit/score/src/threadhandler.c
+index 5e71172d2d..603be16b96 100644
+--- a/cpukit/score/src/threadhandler.c
++++ b/cpukit/score/src/threadhandler.c
+@@ -54,7 +54,13 @@ RTEMS_STATIC_ASSERT(
+     CPU_USE_LIBC_INIT_FINI_ARRAY == FALSE,
+   CPU_USE_LIBC_INIT_FINI_ARRAY
+ );
+-#if defined( __USE_INIT_FINI__ )
++/*
++ * __USE_INIT_FINI__ is a GCC-internal predefine.  clang does not define it, so
++ * testing for it alone silently disables global construction entirely: no C++
++ * static constructor ever runs.  clang emits .init_array exactly as GCC does,
++ * so treat it the same way.
++ */
++#if defined( __USE_INIT_FINI__ ) || defined( __clang__ )
+   #if CPU_USE_LIBC_INIT_FINI_ARRAY == TRUE
+     #define INIT_NAME __libc_init_array
+   #else
+-- 
+2.39.5 (Apple Git-154)
+
