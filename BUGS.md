@@ -398,7 +398,47 @@ than fixing in the toolchain.
 diagnostic `undefined symbol: thread-local initialization routine for _tls_stderr` seen earlier.
 Not investigated further.
 
-#### `psx13`, `termios02` — not investigated
+#### `termios02` — mechanism localised, cause **not** established
+
+`ctermid( term_name )` must return the caller's buffer and does not (`init.c:157`). The test
+declares `char term_name[32]`, so the comparison is straightforward.
+
+What was ruled out, in order:
+
+1. **Not newlib overriding RTEMS.** newlib does not define `ctermid` at all; both toolchains link
+   RTEMS's own `cpukit/libcsupport/src/ctermid.c`.
+2. **The source is plainly correct** — it ends `strcpy( s, ctermid_name ); return s;`.
+3. **The codegen differs.** Clang produces 26 bytes, GCC 40. Clang lowers the tail of the function
+   to a *tail call to `memcpy`*:
+
+```asm
+ctermid:
+  beqz a0, .Lnull
+  lui  a1, %hi(ctermid_name)      # src
+  addi a1, a1, %lo(ctermid_name)
+  li   a2, 0xd                    # 13 = strlen("/dev/console") + 1
+  j    memcpy                     # tail call; ctermid returns whatever memcpy returns
+```
+
+   This is legal only because `memcpy` is defined to return its destination. It looked like the
+   answer.
+
+4. **But it isn't.** Disassembling the `memcpy` actually linked shows every return path is a bare
+   `ret`, and `a0` is never written — the moving pointer is kept in `a5` via `mv a5, a0`. So
+   `memcpy` does return dest, and the tail call is sound.
+
+**The cause is therefore still unknown.** The obvious explanation was tested and disproven; do not
+assume the tail call is at fault without new evidence. Next step would be to single-step
+`ctermid` under the QEMU gdbstub and observe `a0` at the `ret`, rather than reasoning from the
+listing.
+
+#### `psx13` — localised, not diagnosed
+
+`futimens( fd, NULL )` returns non-zero where 0 is required (`psxtests/psx13/test.c:725`). No
+analysis beyond that.
+
+#### `dl08`, `dl09`, `ts-validation-intr`, `ts-validation-no-clock-0` — not investigated
+
 
 No analysis done on these two.
 
