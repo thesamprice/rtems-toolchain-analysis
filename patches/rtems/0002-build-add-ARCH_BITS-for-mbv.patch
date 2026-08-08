@@ -1,0 +1,20 @@
+diff --git a/spec/build/cpukit/optarchbits.yml b/spec/build/cpukit/optarchbits.yml
+index 02fc84da98..341eb1b365 100644
+--- a/spec/build/cpukit/optarchbits.yml
++++ b/spec/build/cpukit/optarchbits.yml
+@@ -9,6 +9,7 @@ copyrights:
+ default:
+ - enabled-by:
+   - riscv/beaglevfire
++  - riscv/mbv64
+   - riscv/mpfs64imafdc
+   - riscv/noel64imac
+   - riscv/noel64imafd
+@@ -20,6 +21,7 @@ default:
+   - '64'
+ - enabled-by:
+   - riscv/griscv
++  - riscv/mbv
+   - riscv/noel32im
+   - riscv/noel32imafd
+   - riscv/rv32i

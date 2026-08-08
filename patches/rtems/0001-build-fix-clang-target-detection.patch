@@ -1,0 +1,24 @@
+diff --git a/spec/build/cpukit/optclang.yml b/spec/build/cpukit/optclang.yml
+index 544defc0f3..178d578f9f 100644
+--- a/spec/build/cpukit/optclang.yml
++++ b/spec/build/cpukit/optclang.yml
+@@ -28,6 +28,19 @@ actions:
+ - env-append: ABI_FLAGS
+ - script: |
+     conf.load("ar asm clang clang++ gccdeps")
++
++    # waf probes the compiler without the --target= flag, so clang reports the
++    # macros of the build host rather than of the RTEMS target.  On a macOS
++    # host that makes get_cc_version() overwrite the DEST_OS of "rtems" set by
++    # configure_variant() with "darwin", which in turn runs
++    # gcc_modifier_darwin() and sets ARCH_ST to ["-arch"].  Every compile then
++    # gets one "-arch <letter>" per character of ARCH.  Restore the target
++    # settings after loading the tools.
++    conf.env["DEST_OS"] = "rtems"
++    conf.env["DEST_BINFMT"] = "elf"
++    conf.env["ARCH_ST"] = []
++    conf.env["SHLIB_MARKER"] = []
++    conf.env["STLIB_MARKER"] = []
+ build-type: option
+ copyrights:
+ - Copyright (C) 2020 Hesham Almatary <Hesham.Almatary@cl.cam.ac.uk>

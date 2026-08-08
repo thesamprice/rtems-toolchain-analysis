@@ -4,9 +4,13 @@ Measured against `llvm-project` at `0594c0187`.
 
 ## The one-sentence answer
 
-**Clang's front end already knows about RTEMS. Clang's driver does not.** The 2011 work added
-target-info plumbing and never added a ToolChain, so today an RTEMS triple compiles correctly
-and then hands the link step to whatever `gcc` is on `PATH`.
+**Clang's front end partly knows about RTEMS. Clang's driver does not know about it at all.**
+The 2011 work added target-info plumbing and never added a ToolChain.
+
+What that costs you turns out to be **architecture-dependent**, which the first draft of this
+document got wrong. See [the correction below](#correction-the-driver-gap-is-architecture-dependent):
+on ARM the link is handed to whatever `gcc` is on `PATH`; on RISC-V it is not, and Clang emits a
+usable bare-metal link line today.
 
 ## What exists today
 
@@ -48,9 +52,24 @@ But it is wired up for only **9 sites in `Targets.cpp`**, covering roughly five 
 ```
 
 **No RISC-V. No AArch64. No x86.** RISC-V is precisely the architecture RTEMS's own Clang
-scaffolding targets, and it does not get `RTEMSTargetInfo` — so `riscv64-unknown-rtems7` gets
-generic `OSTargetInfo` and, I believe, no `__rtems__`. I could not verify this directly because
-no Clang available here was built with the RISC-V backend.
+scaffolding targets.
+
+**Now verified.** I built Clang with the RISC-V backend enabled and measured it:
+
+```
+$ clang --target=riscv64-unknown-rtems7 -dM -E - </dev/null | grep -c rtems
+0
+$ clang --target=arm-unknown-rtems7   -dM -E - </dev/null | grep -c rtems
+1
+```
+
+Reading `Targets.cpp` confirms why — `case llvm::Triple::riscv32:` and `riscv64:` switch on the
+OS for NetBSD, Linux, FreeBSD, OpenBSD, Fuchsia, Haiku, Managarm, Hurd and Serenity, but have no
+`Triple::RTEMS` case, so both fall to `default:` and return a plain `RISCV{32,64}TargetInfo`.
+
+Since every RTEMS header and kernel source is gated on `__rtems__`, **this alone makes it
+impossible to build RTEMS for RISC-V with Clang.** It is also a two-line fix; see
+[Fix 1](#fix-1-riscv-rtemstargetinfo-done) below.
 
 ### 2. Header search — the other 2011 change
 
@@ -94,6 +113,96 @@ $ clang --target=arm-unknown-rtems7 -### hello.c     # last line
 
 The **macOS host compiler** is being handed an ARM object. Compilation also warns
 `unknown platform, assuming -mfloat-abi=soft`.
+
+## Correction: the driver gap is architecture-dependent
+
+The first draft of this document generalised from that ARM result. That was wrong, and the
+correction matters because it changes which architecture is the cheapest place to start.
+
+The ToolChain-selection switch in `Driver.cpp` dispatches on **architecture first**, and only
+falls through to an OS-aware path in its `default:` arm:
+
+```cpp
+      case llvm::Triple::microblazeel:
+        TC = std::make_unique<toolchains::BareMetal>(*this, Target, Args);
+        break;
+      case llvm::Triple::riscv32:
+      case llvm::Triple::riscv64:
+      case llvm::Triple::riscv32be:
+      case llvm::Triple::riscv64be:
+        TC = std::make_unique<toolchains::BareMetal>(*this, Target, Args);
+        break;
+      ...
+      default:
+        if (toolchains::BareMetal::handlesTarget(Target))
+          TC = std::make_unique<toolchains::BareMetal>(*this, Target, Args);
+        else if (Target.isOSBinFormatELF())
+          TC = std::make_unique<toolchains::Generic_ELF>(*this, Target, Args);
+```
+
+RISC-V therefore gets `BareMetal` **unconditionally, whatever the OS is**. ARM reaches
+`default:`, where `handlesTarget` rejects it — because
+
+```cpp
+static bool isRISCVBareMetal(const llvm::Triple &Triple) {
+  ...
+  if (Triple.getOS() != llvm::Triple::UnknownOS)
+    return false;
+  return Triple.getEnvironmentName() == "elf";
+}
+```
+
+and its ARM/AArch64/PPC/x86 siblings apply the same `UnknownOS` rule — so ARM lands in
+`Generic_ELF`, which inherits `Generic_GCC`'s "invoke `gcc` to link" behaviour.
+
+Measured, on the same Clang build, same source file:
+
+```
+$ clang --target=riscv64-unknown-rtems7 -### hello.c    # last line, elided
+ "/usr/bin/ld" "-Bstatic" "-m" "elf64lriscv" "-X" "crt0.o"
+   "-L.../lib/clang-runtimes/riscv64-unknown-rtems7/lib"
+   "$TMPDIR/h-cc13df.o"
+   "--start-group" ".../libclang_rt.builtins.a" "-lc" "--end-group" "-o" "a.out"
+```
+
+That is a **real cross link line** — correct ELF emulation, a `crt0.o`, a sysroot-style library
+path keyed on the RTEMS triple, and the builtins/libc group. Not the host compiler.
+
+Two consequences:
+
+1. **You cannot route RTEMS to `BareMetal` by relaxing `handlesTarget`** — the `UnknownOS` rule
+   forbids it. But for RISC-V that does not matter, because the architecture switch bypasses
+   `handlesTarget` entirely.
+2. **RISC-V is by far the cheapest architecture to bring up**, and it is also the one RTEMS's own
+   Clang scaffolding targets. On RISC-V the driver already does something sane; on ARM a
+   ToolChain is genuinely load-bearing before anything can link at all.
+
+This also means the summary "Clang hands the link to the host `gcc`" is true for ARM and false
+for RISC-V and MicroBlaze. The honest general statement is: **Clang has no RTEMS-aware link
+logic; what you get instead depends on which fallback your architecture happens to land in.**
+
+## Fixes made while writing this
+
+### Fix 1: RISC-V `RTEMSTargetInfo` (done)
+
+Two `case llvm::Triple::RTEMS:` arms in `clang/lib/Basic/Targets.cpp`, plus a regression test
+(`clang/test/Preprocessor/rtems-predefines.c`) covering RISC-V, ARM and SPARC, the C++
+`_GNU_SOURCE` case, and a negative control asserting `riscv64-unknown-elf` still does not define
+`__rtems__`.
+
+After the fix:
+
+```
+$ clang --target=riscv32-unknown-rtems7 -dM -E - </dev/null | grep rtems
+#define __rtems__ 1
+$ clang --target=riscv64-unknown-rtems7 -dM -E - </dev/null | grep rtems
+#define __rtems__ 1
+$ clang --target=riscv64-unknown-elf    -dM -E - </dev/null | grep -c rtems
+0
+```
+
+`clang/test/Preprocessor` and `clang/test/Driver` (1866 tests) show no regression from the
+change. This is directly upstreamable and is the smallest useful contribution identified here.
 
 ## Sizing a ToolChain
 
@@ -229,7 +338,15 @@ where RTEMS's own Clang scaffolding already points.
 Verified by running or reading directly: everything in "What exists today", the `Driver.cpp`
 gap, ToolChain line counts, architecture coverage, and the `-###` link behaviour.
 
-Not verified: the runtime-library file references come from a code survey I did not independently
-re-check line by line; the RISC-V `__rtems__` claim could not be tested because no locally
-available Clang has the RISC-V backend; and no part of Tier A or B has been prototyped, so the
-size estimates are judgement, not measurement.
+Since verified by building Clang with the RISC-V backend and running it (see
+[05](05-clang-riscv-bringup.md)): the missing RISC-V `RTEMSTargetInfo` — which was the one claim
+this document originally had to hedge — plus the architecture-dependent driver behaviour, which
+turned out to contradict this document's first draft and is corrected above. Item A4 for RISC-V is
+done; A1/A2 (the ToolChain) are not.
+
+Still not verified: the runtime-library file references come from a code survey I did not
+independently re-check line by line, and no ToolChain has been written, so the Tier A and Tier B
+size estimates remain judgement rather than measurement. The bring-up in
+[05](05-clang-riscv-bringup.md) borrows GCC's newlib, libgcc and libstdc++ throughout, so it says
+nothing about whether LLVM's own runtimes work on RTEMS — in particular the `libcxx/__config`
+one-line change identified as the highest-value Tier B item is still untested.

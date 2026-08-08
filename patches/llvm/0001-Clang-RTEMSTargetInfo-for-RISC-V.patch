@@ -1,0 +1,73 @@
+From f3fdc3597a122b889df3fa75d325748ceaff8fed Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Fri, 7 Aug 2026 22:43:44 -0400
+Subject: [PATCH] [Clang] Use RTEMSTargetInfo for RISC-V RTEMS triples
+
+RISC-V RTEMS triples fell through to the plain RISCV32/64TargetInfo, so
+__rtems__ was never predefined. RTEMS headers and kernel sources are
+gated on __rtems__, so riscv*-*-rtems* could not build RTEMS at all.
+
+ARM, MIPS, PowerPC and SPARC have had RTEMSTargetInfo since 2011; RISC-V
+was simply never added, despite being a supported RTEMS architecture.
+
+Add a regression test covering the RTEMS predefines on RISC-V, ARM and
+SPARC, the C++ _GNU_SOURCE case, and a negative control asserting that
+riscv64-unknown-elf still does not define __rtems__.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ clang/lib/Basic/Targets.cpp                |  4 ++++
+ clang/test/Preprocessor/rtems-predefines.c | 19 +++++++++++++++++++
+ 2 files changed, 23 insertions(+)
+ create mode 100644 clang/test/Preprocessor/rtems-predefines.c
+
+diff --git a/clang/lib/Basic/Targets.cpp b/clang/lib/Basic/Targets.cpp
+index 45c684e51..f90cc2cde 100644
+--- a/clang/lib/Basic/Targets.cpp
++++ b/clang/lib/Basic/Targets.cpp
+@@ -449,6 +449,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
+                                                                    Opts);
+     case llvm::Triple::Linux:
+       return std::make_unique<LinuxTargetInfo<RISCV32TargetInfo>>(Triple, Opts);
++    case llvm::Triple::RTEMS:
++      return std::make_unique<RTEMSTargetInfo<RISCV32TargetInfo>>(Triple, Opts);
+     default:
+       return std::make_unique<RISCV32TargetInfo>(Triple, Opts);
+     }
+@@ -495,6 +497,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
+     case llvm::Triple::Serenity:
+       return std::make_unique<SerenityTargetInfo<RISCV64TargetInfo>>(Triple,
+                                                                      Opts);
++    case llvm::Triple::RTEMS:
++      return std::make_unique<RTEMSTargetInfo<RISCV64TargetInfo>>(Triple, Opts);
+     default:
+       return std::make_unique<RISCV64TargetInfo>(Triple, Opts);
+     }
+diff --git a/clang/test/Preprocessor/rtems-predefines.c b/clang/test/Preprocessor/rtems-predefines.c
+new file mode 100644
+index 000000000..2caf91c14
+--- /dev/null
++++ b/clang/test/Preprocessor/rtems-predefines.c
+@@ -0,0 +1,19 @@
++// Check that RTEMS targets predefine __rtems__, and that _GNU_SOURCE is
++// additionally predefined in C++ mode.
++
++// RUN: %clang_cc1 -E -dM -triple riscv32-unknown-rtems7 < /dev/null | FileCheck -check-prefix=RTEMS %s
++// RUN: %clang_cc1 -E -dM -triple riscv64-unknown-rtems7 < /dev/null | FileCheck -check-prefix=RTEMS %s
++// RUN: %clang_cc1 -E -dM -triple arm-unknown-rtems7 < /dev/null | FileCheck -check-prefix=RTEMS %s
++// RUN: %clang_cc1 -E -dM -triple sparc-rtems-elf < /dev/null | FileCheck -check-prefix=RTEMS %s
++
++// RTEMS: #define __rtems__ 1
++
++// Non-RTEMS RISC-V targets must not pick up the OS macros.
++// RUN: %clang_cc1 -E -dM -triple riscv64-unknown-elf < /dev/null | FileCheck -check-prefix=NORTEMS %s
++
++// NORTEMS-NOT: __rtems__
++
++// RUN: %clang_cc1 -x c++ -E -dM -triple riscv64-unknown-rtems7 < /dev/null | FileCheck -check-prefix=RTEMSCXX %s
++
++// RTEMSCXX-DAG: #define _GNU_SOURCE 1
++// RTEMSCXX-DAG: #define __rtems__ 1
+-- 
+2.39.5 (Apple Git-154)
+

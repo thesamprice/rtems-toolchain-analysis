@@ -11,6 +11,10 @@ work needed to do the equivalent in LLVM/Clang.
 | [02](02-rtems-in-the-gnu-toolchain.md) | **What RTEMS support consists of in GCC, binutils and newlib** — measured, file by file |
 | [03](03-rtems-side-clang-support.md) | **What RTEMS already has for Clang** — the 2020 scaffolding, and what Clang does with an RTEMS triple today |
 | [04](04-llvm-gap-analysis.md) | **What it would take to support RTEMS in LLVM** — the gap, work items, sizes |
+| [05](05-clang-riscv-bringup.md) | **Building RTEMS for RISC-V with Clang** — the experiment, and the twelve things that broke |
+| [`patches/`](patches/) | The three real fixes: one Clang, two RTEMS |
+| [`repro/`](repro/) | The `config.ini` carrying the remaining workarounds |
+| [`results/`](results/) | Raw QEMU testsuite output |
 | [`evidence/`](evidence/) | Commands run and their raw output |
 
 ## The findings, in short
@@ -79,6 +83,33 @@ architectures. It is missing microblaze (removed in 2013), moxie, nios2 and or1k
 port could cover arm, aarch64, riscv, x86_64 and sparc — which is where RTEMS's existing Clang
 work already points — but could not replace GCC across the whole project.
 
+## We then actually did it
+
+Rather than leave [04](04-llvm-gap-analysis.md) as a paper study, we built Clang with the RISC-V
+backend and pointed RTEMS 7's build system at it. **RTEMS boots and runs on QEMU built entirely
+with Clang** — but only after twelve distinct fixes. [05](05-clang-riscv-bringup.md) records every
+one in the order it occurs.
+
+Three deserve highlighting:
+
+- **Clang did not define `__rtems__` for RISC-V.** Suspected in the paper study, confirmed by
+  measurement, and fixed: `Targets.cpp` had no `Triple::RTEMS` case for `riscv32`/`riscv64`. Two
+  `case` arms and a regression test, directly upstreamable.
+- **Two RTEMS bugs in code that had provably never been run.** `optarchbits.yml` omits four of its
+  own RISC-V BSPs, so the clang triple came out as the invalid `riscv-unknown-rtems7`. And because
+  RTEMS appends `--target=` *after* waf loads the compiler tools, waf probes Clang as a *host*
+  compiler and overwrites RTEMS's `DEST_OS="rtems"` with `"darwin"` — which made every compile
+  receive `-arch r -arch i -arch s -arch c -arch v`, waf iterating the string `"riscv"` character
+  by character.
+- **The `crt0.o` collision** is the single best artifact in this study. Clang linked newlib's
+  *stub* `crt0.o` — the fake-kernel one whose entire purpose is to make autoconf link probes
+  succeed — and it collided with the real RTEMS kernel. GCC avoids this only because its spec says
+  `%{!qrtems:crt0%O%s}`. That is the `-qrtems` seam failing in the most literal way possible.
+
+A cautionary note is recorded there too: at one stage 702 of 721 executables linked cleanly and
+were **all unbootable**, because nothing passed `-T linkcmds` and lld had used its default layout.
+A clean link is not evidence of a working image.
+
 ## The asymmetry
 
 GCC's RTEMS support is **large in aggregate but tiny per decision**: a few hundred lines of specs
@@ -91,9 +122,24 @@ not exist at all, and behind it a scattering of one-line allowlist entries.
 Findings were established by reading and running against actual trees, not from documentation:
 RTEMS Source Builder `105f43d`, RTEMS 7, GCC 15.2.0, binutils-gdb master, newlib `7d4336cf`, and
 `llvm-project` `0594c0187`. Where a claim rests on a code survey rather than something executed,
-the document says so — see the "Verification status" section of
-[04](04-llvm-gap-analysis.md). No part of the proposed LLVM work has been prototyped, so the size
-estimates are informed judgement, not measurement.
+the document says so — see the "Verification status" section of [04](04-llvm-gap-analysis.md).
+
+[05](05-clang-riscv-bringup.md) is entirely empirical: every failure listed there was observed,
+and the fix for it was applied and re-run. The RTEMS work was done in a `git worktree` so the
+existing GCC build tree was never touched, and a GCC control build was run in that worktree first
+to prove the setup before changing compilers.
+
+Caveats that matter: the Tier A/B size estimates in [04](04-llvm-gap-analysis.md) remain
+judgement, not measurement — no ToolChain has been written. The bring-up in
+[05](05-clang-riscv-bringup.md) still uses GCC's newlib, libgcc and libstdc++, so it demonstrates
+that *Clang can compile and link RTEMS*, not that LLVM's own runtime stack works. And its
+testsuite numbers carry twelve workarounds, so they are not a fair comparison against the GCC
+baseline.
+
+One correction is recorded rather than quietly fixed: the first draft of
+[04](04-llvm-gap-analysis.md) generalised from ARM and claimed Clang hands RTEMS links to the host
+`gcc`. That is false for RISC-V, which the driver routes to `BareMetal` by architecture before any
+OS check. The original claim and its correction are both left in place.
 
 ## Related
 
