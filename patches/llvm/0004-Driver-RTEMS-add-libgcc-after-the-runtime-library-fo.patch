@@ -1,0 +1,110 @@
+From c27281c517a34760ac345ad7264736c739e202e3 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 22:15:26 -0400
+Subject: [PATCH] [Driver] RTEMS: add libgcc after the runtime library for the
+ unwinder
+
+RTEMS unwinds with libgcc; compiler-rt ships no unwinder and the RTEMS
+toolchain installs no separate libgcc_eh.a.  Adding -lgcc is therefore
+necessary, but where it goes matters: libgcc also defines the soft float
+helpers and declares them hidden, and a linker which demotes hidden to
+local then places them in .symtab as local symbols where a runtime loader
+can no longer see them.  compiler-rt has to be scanned first and win.
+
+Emit it at the end of the group, after AddRunTimeLibs(), and only for a
+compiler-rt build since AddRunTimeLibs() already adds libgcc for an
+-rtlib=libgcc one.  It is not driven by GetUnwindLibType(): that returns
+UNW_None for compiler-rt on every target which is not Android, AIX or
+Serenity and never consults GetDefaultUnwindLibType().
+
+This lets an RTEMS build drop a hand-repacked libgcc_eh.a -- extracted from
+libgcc's three unwind objects precisely to keep its hidden soft float
+symbols out of the link -- along with the -L that found it.  Verified: the
+helpers are GLOBAL DEFAULT in the libdl base images, every dl test and
+every C++ unwinding test passes, and the suite is byte-identical to the GCC
+baseline.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ clang/lib/Driver/ToolChains/RTEMS.cpp | 20 +++++++++++++++++++-
+ clang/lib/Driver/ToolChains/RTEMS.h   |  3 ++-
+ clang/test/Driver/rtems.c             | 10 +++++++---
+ 3 files changed, 28 insertions(+), 5 deletions(-)
+
+diff --git a/clang/lib/Driver/ToolChains/RTEMS.cpp b/clang/lib/Driver/ToolChains/RTEMS.cpp
+index 9dbb943fa..3d8256a22 100644
+--- a/clang/lib/Driver/ToolChains/RTEMS.cpp
++++ b/clang/lib/Driver/ToolChains/RTEMS.cpp
+@@ -141,7 +141,25 @@ void rtems::Linker::ConstructJob(Compilation &C, const JobAction &JA,
+     CmdArgs.push_back("-lrtemscpu");
+     CmdArgs.push_back("-latomic");
+     CmdArgs.push_back("-lc");
+-    CmdArgs.push_back("-lgcc");
++    // GCC's spec ends the group with -lgcc because GCC always uses libgcc.
++    // Honour -rtlib instead: libgcc declares its soft float helpers hidden, and
++    // a linker which demotes hidden to local drops them from .symtab, so a
++    // runtime loader can no longer resolve them for a module it loads.  Adding
++    // libgcc unconditionally therefore breaks libdl on a compiler-rt build.
++    AddRunTimeLibs(TC, D, CmdArgs, Args);
++    // The unwinder still comes from libgcc: compiler-rt does not ship one and
++    // this toolchain installs no separate libgcc_eh.  It must come *after* the
++    // runtime library, because libgcc also defines the soft float helpers and
++    // declares them hidden.  A linker which demotes hidden to local would then
++    // put them in .symtab as local symbols, where a runtime loader can no
++    // longer see them -- so compiler-rt has to be scanned first and win.
++    // Only for a compiler-rt build: AddRunTimeLibs() already adds libgcc for
++    // an -rtlib=libgcc one.  This is not driven by GetUnwindLibType(), which
++    // returns UNW_None for compiler-rt on every target which is not Android,
++    // AIX or Serenity and never consults GetDefaultUnwindLibType().  GCC's
++    // -qrtems spec ends its group with -lgcc for the same reason.
++    if (TC.GetRuntimeLibType(Args) == ToolChain::RLT_CompilerRT)
++      CmdArgs.push_back("-lgcc");
+     CmdArgs.push_back("--end-group");
+   }
+ 
+diff --git a/clang/lib/Driver/ToolChains/RTEMS.h b/clang/lib/Driver/ToolChains/RTEMS.h
+index 1c066009b..b2eb0b557 100644
+--- a/clang/lib/Driver/ToolChains/RTEMS.h
++++ b/clang/lib/Driver/ToolChains/RTEMS.h
+@@ -62,8 +62,9 @@ public:
+   /// compiler-rt and the driver agree on where to look.
+   StringRef getOSLibName() const override { return "rtems"; }
+ 
++  /// RTEMS unwinds with libgcc; compiler-rt ships no unwinder.
+   UnwindLibType GetDefaultUnwindLibType() const override {
+-    return ToolChain::UNW_None;
++    return ToolChain::UNW_Libgcc;
+   }
+ 
+   /// RTEMS links with GNU binutils; the cross ld is found via the program
+diff --git a/clang/test/Driver/rtems.c b/clang/test/Driver/rtems.c
+index 3289326f0..16b032c89 100644
+--- a/clang/test/Driver/rtems.c
++++ b/clang/test/Driver/rtems.c
+@@ -6,7 +6,7 @@
+ /// spec supplies -- the start files, the linker command file and the group
+ /// around the mutually dependent RTEMS libraries -- had to be passed by hand.
+ 
+-// RUN: %clang -### --target=riscv32-unknown-rtems7 -mabi=ilp32f \
++// RUN: %clang -### --target=riscv32-unknown-rtems7 -mabi=ilp32f -rtlib=compiler-rt \
+ // RUN:   --sysroot=%S/Inputs/basic_rtems_tree/riscv-rtems7 \
+ // RUN:   --gcc-install-dir=%S/Inputs/basic_rtems_tree/lib/gcc/riscv-rtems7/15.2.0 \
+ // RUN:   %s 2>&1 | FileCheck %s
+@@ -23,8 +23,12 @@
+ // CHECK-SAME: "{{.*}}rv32imafc/ilp32f{{/|\\\\}}crtbegin.o"
+ 
+ /// The RTEMS libraries are mutually dependent, so a linker which makes one
+-/// pass over each archive cannot resolve them in any fixed order.
+-// CHECK-SAME: "--start-group" "-lrtemsbsp" "-lrtemscpu" "-latomic" "-lc" "-lgcc" "--end-group"
++/// pass over each archive cannot resolve them in any fixed order.  libgcc
++/// comes after the runtime library: it also defines the soft float helpers and
++/// declares them hidden, so compiler-rt has to be scanned first and win, or a
++/// linker which demotes hidden to local hides them from the runtime loader.
++// CHECK-SAME: "--start-group" "-lrtemsbsp" "-lrtemscpu" "-latomic" "-lc"
++// CHECK-SAME: libclang_rt.builtins.a" "-lgcc" "--end-group"
+ 
+ // CHECK-SAME: "{{.*}}rv32imafc/ilp32f{{/|\\\\}}crtend.o"
+ // CHECK-SAME: "{{.*}}rv32imafc/ilp32f{{/|\\\\}}crtn.o"
+-- 
+2.39.5 (Apple Git-154)
+

@@ -517,7 +517,7 @@ rebuilding, which is worth recording because two of them turned out not to be wo
 | `-ftls-model=local-exec` | **removed** from here — moved into RTEMS's clang spec, see F6 |
 | `-u<sym>` forcing | **replaced** by `-Wl,--undefined=`, which clang actually forwards |
 | `-idirafter .../15.2.0/include` | **removed** — the gcov support is now gated on GCC |
-| hand-repacked `libgcc_eh.a` | **still required** — see the correction below |
+| hand-repacked `libgcc_eh.a` | **removed** — the ToolChain orders libgcc after compiler-rt |
 | two `-L` multilib paths | **still required, but not by the compiler** — see below |
 | `--sysroot`, `--gcc-install-dir`, `-rtlib=compiler-rt` | not workarounds — ordinary cross-compilation options |
 
@@ -548,13 +548,19 @@ the search path.
 
 Three findings from that exercise:
 
-- **The `libgcc_eh.a` repack is still required.** An earlier revision of this document said it was
-  obsolete and could be replaced by plain `-lgcc`. That was wrong, and the way it was wrong is the
-  most useful thing here: the `dl` tests were checked *without regenerating their base images and
-  symbol tables*, so they were still passing on artifacts built before the change. Deleting the
-  `.pre`, `-sym.c` and `.rap` files and rebuilding shows `dl02` failing. Restoring the repack fixes
-  it. **Any change that touches libdl has to delete those artifacts before it is measured**, and
-  this is the second time in this study that not doing so produced a confident and wrong result.
+- **The `libgcc_eh.a` repack is gone, but not for the reason first claimed.** An earlier revision
+  said it was obsolete and plain `-lgcc` would do. That was wrong — checked without regenerating
+  the libdl base images, so the `dl` tests were passing on stale artifacts, and regenerating showed
+  `dl02` failing. **Any change touching libdl has to delete the `.pre`, `-sym.c` and `.rap` files
+  before it is measured**; not doing so produced a confident wrong answer twice in this study.
+
+  The real problem was ordering. The repack existed to keep libgcc's *hidden* soft float helpers
+  out of the link while still getting its unwinder, because a linker which demotes hidden to local
+  puts them in `.symtab` where the runtime loader cannot see them. Plain `-lgcc` in `LDFLAGS` sits
+  ahead of the compiler-rt the driver appends, so libgcc won. Having the **ToolChain** emit `-lgcc`
+  at the end of the group, after `AddRunTimeLibs()`, makes compiler-rt win by construction: the
+  helpers come out `GLOBAL DEFAULT` and the unwinder still resolves. The repack and its `-L` both
+  disappear, and with them the last dependency on a hand-built archive.
 - **The newlib `-L` is not redundant with `--sysroot`.** Remove it and clang finds the *default*
   `<sysroot>/lib/libc.a` instead of the `rv32imafc/ilp32f` one, and the link fails with
   `cannot link object files with different floating-point ABI`. Clang has no multilib knowledge for

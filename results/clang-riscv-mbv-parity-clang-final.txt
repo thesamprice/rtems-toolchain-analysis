@@ -1,4 +1,3 @@
-FAIL cpuuse
 FAIL dl06
 FAIL sp04
 FAIL spcontext01
@@ -27,6 +26,7 @@ PASS bspcmdline01
 PASS capture01
 PASS cdtest
 PASS complex
+PASS cpuuse
 PASS crypt01
 PASS defaultconfig01
 PASS devfs01

@@ -70,6 +70,11 @@ RTEMS's Clang scaffolding most targets.
 for Clang to be a drop-in replacement for GCC using GNU binutils and RTEMS's newlib — no
 compiler-rt, no lld, no libc++ required.
 
+> **That file now exists.** It is written, registered, tested and pushed — see
+> [`patches/llvm/`](patches/llvm/) and the workaround table in
+> [07](07-reaching-gcc-parity.md). With it the RTEMS build's `config.ini` drops from nine lines of
+> hand-written flags to two, and the test suite stays byte-identical to the GCC baseline.
+
 **The runtime libraries are in better shape than expected.** Most threading and libc dispatch is
 feature-gated rather than OS-gated, and `RUNTIMES_USE_LIBC=newlib` is already first-class in
 libc++. The highest impact-to-effort item in the whole assessment is **one line** in
