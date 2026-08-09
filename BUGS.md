@@ -631,6 +631,66 @@ analysis beyond that.
 
 No analysis done on these two.
 
+### O8 — `dl06`: rtems-ld writes a `.rap` nothing can read
+
+Compiler independent, and the reason `dl06` is the one `dl` test still failing.
+
+`rtems-ld` produces a `.rap` whose compressed stream ends early. The runtime loader rejects it with
+`offset past end of file: offset=13099 size=13099`, and the host tool cannot read it either:
+
+```
+$ rtems-rap -l dl06.rap
+ error: compression: Reading of value failed
+ warning: file read failed, some data may be corrupt or not present.
+```
+
+**Both compilers produce a corrupt file and both fail the test**, and the stock RSB-built
+`rtems-ld` reproduces it, so this is neither a clang problem nor a consequence of anything in this
+study. It was previously hidden behind the symbol failure fixed in F20.
+
+Localised to the RAP compression layer: `rld-rap.cpp` writes through a `compress::compressor` with
+a 2 KiB buffer and does call `flush()`, and blocks are framed with a 2-byte length header, so the
+obvious truncation causes are ruled out. The reader hits EOF part way through a value. Not root
+caused further.
+
+### O9 — `ttest01`: an upstream reformat invalidated the test framework's own expectations
+
+Compiler independent — the failure output is byte-identical under GCC and clang.
+
+`ttest01` is the test framework's self test. Each case pairs a `T_TEST_CASE` with a
+`T_TEST_OUTPUT` block holding the exact output the framework should produce, **including the source
+line number of every assertion**:
+
+```c
+T_TEST_OUTPUT(
+  zalloc_auto,
+  "B:zalloc_auto\n"
+  "P:0:0:UI1:test-malloc.c:35\n"     /* but the assertion is on line 34 */
+  ...
+```
+
+Upstream commit **`4d1604efb6` "testsuites/libtests: reformat with clang-format"** (Gedare Bloom,
+2026-01-23, on `origin/main`) reflowed these files. That moved the assertions but not the line
+numbers embedded in the expected strings, which are *data* and invisible to a formatter. In
+`test-malloc.c` the first two references are still right and everything from line 25 onward is off
+by one.
+
+Confirmed by repair: correcting `test-malloc.c` makes that case pass and moves the failure to the
+next file, and so on through `test-assert.c`, `test-destructor.c`, `test-fixture.c`, `test-leak.c`
+and `test-rtems.c`.
+
+**The scale is why this is reported rather than fixed here.** There are **1483 embedded line
+references across 15 files**, `test-checks.c` alone holding 1324. Some cannot be repaired
+mechanically: a stale reference often lands on a *neighbouring* assertion, so "does this line hold
+an assertion" is not a sufficient test, and step numbers repeat across cases so a file-global
+step-to-line map is wrong for later blocks. Both traps were hit and backed out while confirming the
+diagnosis.
+
+The right fix is upstream and is one of: regenerate the expected blocks from actual output — which
+needs a framework mode that dumps rather than compares, since `T_TEST_OUTPUT` is compile-time data
+in a linker set — or stop embedding line numbers in them, which would make the suite immune to the
+next reformat.
+
 ---
 
 ## Summary
@@ -641,6 +701,7 @@ No analysis done on these two.
 | Worked around, needs a proper home | 1 (F6) |
 | Open, root-caused | 1 (O2) |
 | Open, hypothesis disproven | 1 (O7) |
+| Open, root-caused, compiler independent | 2 (O8, O9) |
 
 **O4 is closed.** All eight remaining test failures are fixed — see
 [07](07-reaching-gcc-parity.md) — and the same 674 tests now produce the same verdict under both
