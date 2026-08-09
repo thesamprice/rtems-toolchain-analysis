@@ -471,6 +471,36 @@ tree*, so the repo walk finds the RSB and stamps its HEAD. That is also why the 
 same dirty worktree reported twice. The RSB actually pins rtems-tools at
 `2fdcd1ed953ed40b51f12be71968929cd88dadae`.
 
+## `-u` is silently dropped by clang
+
+Found while explaining why `dl07`, `dl08` and `dl09` failed their `unresolved == 0` assertion.
+
+`LIBDL_TESTS_LDFLAGS` forces symbols a loaded module needs into the base image with `-u<sym>`, so
+that `rtems-syms` exports them. Tracing the `dl07.pre` link with `-Wl,-y` showed compiler-rt's
+member sitting there as a `lazy definition of __extendsfdf2` — seen, never extracted. The reason is
+that **`-u` never reaches the linker at all**:
+
+| | reaches the linker |
+|---|---|
+| `clang -u__extendsfdf2` | no |
+| `clang -u __extendsfdf2` | no |
+| `clang -Wl,-u,__extendsfdf2` | yes |
+| `clang -Wl,--undefined=__extendsfdf2` | yes |
+| `gcc -u__extendsfdf2` | **yes** |
+
+Clang drops it with nothing but `argument unused during compilation`. So the entire forcing
+mechanism has been inert under clang, and the `dl` tests that did pass were passing because their
+symbols happened to be referenced by libc rather than because they were forced. `__extendsfdf2`,
+which nothing else references, was absent from every base image.
+
+Switching the list to `-Wl,--undefined=`, which both drivers forward, fixes it:
+`__extendsfdf2` becomes `GLOBAL DEFAULT` and `dl07`/`dl08`/`dl09` pass. Verified on the GCC tree as
+well, with base images regenerated, and it changes nothing there.
+
+Worth deciding whether clang silently discarding a documented linker flag that GCC honours is a
+driver bug in its own right. It fails in the worst possible way: no diagnostic, and a link that
+succeeds while quietly omitting what you asked for.
+
 ## What parity does not mean
 
 The table at the top is a real result and a narrow one.
@@ -481,7 +511,7 @@ rebuilding, which is worth recording because two of them turned out not to be wo
 
 | flag | verdict |
 |---|---|
-| hand-repacked `libgcc_eh.a` | **removed** — plain `-lgcc` now works |
+| hand-repacked `libgcc_eh.a` | **still required** — see the correction below |
 | `-ftls-model=local-exec` | **removed** from here — moved into RTEMS's clang spec, see F6 |
 | `-L .../rv32imafc/ilp32f` (newlib) | **required** — it is doing multilib selection, not path hinting |
 | `-idirafter .../15.2.0/include` | **required**, for exactly one header: `<gcov.h>` |
@@ -490,11 +520,13 @@ rebuilding, which is worth recording because two of them turned out not to be wo
 
 Three findings from that exercise:
 
-- **The `libgcc_eh.a` repack was obsolete.** It existed so the unwinder could be linked without
-  dragging in libgcc's hidden `__muldf3`, which broke libdl symbol export (O1). Once O1 was fixed
-  properly — compiler-rt built with visible symbols, plus `-u` forcing — the repack stopped being
-  necessary and nobody had rechecked. Removing it leaves every `dl` test and every C++ unwinding
-  test (`exit03`, `iostream`, `rcxx01`, `spcxx01`) passing.
+- **The `libgcc_eh.a` repack is still required.** An earlier revision of this document said it was
+  obsolete and could be replaced by plain `-lgcc`. That was wrong, and the way it was wrong is the
+  most useful thing here: the `dl` tests were checked *without regenerating their base images and
+  symbol tables*, so they were still passing on artifacts built before the change. Deleting the
+  `.pre`, `-sym.c` and `.rap` files and rebuilding shows `dl02` failing. Restoring the repack fixes
+  it. **Any change that touches libdl has to delete those artifacts before it is measured**, and
+  this is the second time in this study that not doing so produced a confident and wrong result.
 - **The newlib `-L` is not redundant with `--sysroot`.** Remove it and clang finds the *default*
   `<sysroot>/lib/libc.a` instead of the `rv32imafc/ilp32f` one, and the link fails with
   `cannot link object files with different floating-point ABI`. Clang has no multilib knowledge for

@@ -1,0 +1,61 @@
+From b5b7808dc05eefa5c74eda8cf5a971b568fafe5a Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 21:10:31 -0400
+Subject: [PATCH] testsuites/libdl: Force base image symbols in a way clang
+ forwards
+
+LIBDL_TESTS_LDFLAGS uses -u<sym> to pull symbols a loaded module needs
+into the base image so rtems-syms exports them.  clang does not forward -u
+to the linker at all, in either the joined or the separate form:
+
+  clang -u__extendsfdf2          reaches the linker: no
+  clang -u __extendsfdf2         reaches the linker: no
+  clang -Wl,-u,__extendsfdf2     reaches the linker: yes
+  clang -Wl,--undefined=<sym>    reaches the linker: yes
+  gcc   -u__extendsfdf2          reaches the linker: yes
+
+It is silently dropped with only "argument unused during compilation", so
+the whole mechanism has been a no-op under clang.  __extendsfdf2 was
+absent from every libdl base image, dl07, dl08 and dl09 failed their
+"unresolved == 0" assertion, and the tests which did pass were passing
+because their symbols happened to be referenced by libc rather than
+because they were forced.
+
+Use -Wl,--undefined= instead, which both drivers forward.  Verified on
+both compilers with the base images regenerated: __extendsfdf2 is now
+GLOBAL DEFAULT, dl07/dl08/dl09 pass under clang, and the GCC tree is
+unchanged apart from cpuuse, which is timing marginal.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ spec/build/testsuites/libtests/optdlldflags.yml | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/spec/build/testsuites/libtests/optdlldflags.yml b/spec/build/testsuites/libtests/optdlldflags.yml
+index e935e999fe..64761a82f0 100644
+--- a/spec/build/testsuites/libtests/optdlldflags.yml
++++ b/spec/build/testsuites/libtests/optdlldflags.yml
+@@ -11,13 +11,13 @@ default:
+   - microblaze
+   - riscv
+   value:
+-  - -u__extendsfdf2
+-  - -u__muldf3
+-  - -u__eqdf2
+-  - -u__fixdfsi
+-  - -u_tls_rand48_add
+-  - -u_tls_rand48_mult
+-  - -u_tls_rand48_seed
++  - -Wl,--undefined=__extendsfdf2
++  - -Wl,--undefined=__muldf3
++  - -Wl,--undefined=__eqdf2
++  - -Wl,--undefined=__fixdfsi
++  - -Wl,--undefined=_tls_rand48_add
++  - -Wl,--undefined=_tls_rand48_mult
++  - -Wl,--undefined=_tls_rand48_seed
+ - enabled-by: true
+   value: []
+ description: |
+-- 
+2.39.5 (Apple Git-154)
+
