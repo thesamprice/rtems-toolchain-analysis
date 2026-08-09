@@ -1,0 +1,63 @@
+From e4b8e57fbe06e6736f210ac5582afcc631ecb098 Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 23:03:46 -0400
+Subject: [PATCH] rtemstoolkit: Do not discard compiler flags the filter does
+ not know
+
+filter_flags() classifies each flag against a table and collects the match
+into opts.  A flag which matches nothing leaves opts empty, and the tail of
+the loop appends that empty string, so the option is silently dropped.
+
+That was survivable while the compiler was always reached through the RTEMS
+tool prefix, because everything selecting the target came from the program
+name and the unrecognised flags were mostly warnings and defines.  It is
+not survivable for a compiler told its target by flag.  --target=,
+--sysroot=, --gcc-install-dir= and -rtlib= are all absent from the table,
+so rtems-ld probed clang as if for the build host:
+
+  execute: clang -ftls-model=... -march=... -mabi=... -print-search-dirs
+  libraries: =<clang resource dir>
+
+and every target library lookup failed with "libm.a: Not found", which the
+RTEMS build had been working around by passing the multilib paths as
+explicit -L entries.
+
+Keep whatever the table did not claim.  With this, rtems-ld resolves
+libm.a from -print-file-name alone and those -L entries can go.  Verified
+on both compilers: the clang tree builds every .rap with no explicit
+library paths and the test suite is byte-identical to the GCC baseline, and
+the GCC tree is unchanged.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ rtemstoolkit/rld-cc.cpp | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/rtemstoolkit/rld-cc.cpp b/rtemstoolkit/rld-cc.cpp
+index b424214..e0c2aab 100644
+--- a/rtemstoolkit/rld-cc.cpp
++++ b/rtemstoolkit/rld-cc.cpp
+@@ -192,8 +192,19 @@ namespace rld
+           }
+         }
+ 
++        /*
++         * A flag which matched nothing in the table above leaves opts empty,
++         * and appending that silently discards the option.  That was survivable
++         * while the compiler was always found through the RTEMS tool prefix,
++         * because everything which selected the target came from the program
++         * name.  It is not survivable for a compiler which is told its target
++         * by flag: dropping --target=, --sysroot= or --gcc-install-dir= leaves
++         * the compiler answering -print-search-dirs and -print-file-name for
++         * the build host, so no target library is ever found.  Keep whatever
++         * the table did not claim.
++         */
+         if (in)
+-          oflags += ' ' + opts;
++          oflags += ' ' + (opts.empty () ? opt : opts);
+       }
+ 
+       rld::trim (warnings);
+-- 
+2.39.5 (Apple Git-154)
+

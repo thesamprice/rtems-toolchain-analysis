@@ -518,20 +518,34 @@ rebuilding, which is worth recording because two of them turned out not to be wo
 | `-u<sym>` forcing | **replaced** by `-Wl,--undefined=`, which clang actually forwards |
 | `-idirafter .../15.2.0/include` | **removed** — the gcov support is now gated on GCC |
 | hand-repacked `libgcc_eh.a` | **removed** — the ToolChain orders libgcc after compiler-rt |
-| two `-L` multilib paths | **still required, but not by the compiler** — see below |
+| two `-L` multilib paths | **removed** — `rtems-ld` was discarding the flags it needed |
 | `--sysroot`, `--gcc-install-dir`, `-rtlib=compiler-rt` | not workarounds — ordinary cross-compilation options |
 
 With the ToolChain in place the suite is byte-identical to the GCC baseline, so those removals cost
 nothing.
 
-The two `-L` entries are the interesting survivors: the compiler no longer needs them, because the
-ToolChain emits the multilib paths itself. They are there for **`rtems-ld`**, which resolves `-l`
-by running the compiler with `-print-search-dirs`. `wscript` passed only `CFLAGS` to that probe and
-not `ABI_FLAGS`, so the compiler was asked as if for the build host and answered with the wrong
-multilib's directories; that is now fixed. It is **not** sufficient on its own — `rtems-ld` still
-reports `libm.a: Not found` without the explicit paths even though the directory holding it appears
-in the probe output, so something in how it consumes that output remains wrong. Passing the right
-flags is correct regardless, and the remaining fault is squarely in `rtems-ld`.
+The two `-L` entries took two fixes, and the second one is the more interesting bug.
+
+`rtems-ld` resolves `-l` by running the compiler with `-print-file-name=`. `wscript` passed only
+`CFLAGS` to that probe and not `ABI_FLAGS`, so the compiler was asked as if for the build host —
+that is the first fix. It was not sufficient, and tracing the probe showed why:
+
+```
+execute: clang -ftls-model=... -march=... -mabi=... -print-search-dirs
+libraries: =<clang resource directory>
+```
+
+Everything else had vanished. `rtemstoolkit`'s `filter_flags()` classifies each flag against a
+table and collects the match into `opts`; a flag matching **nothing** leaves `opts` empty, and the
+tail of the loop appends that empty string. **Any option the table does not know is silently
+discarded.** The table knows `-m`, `-f`, `-O`, `-W`, `-I`, `-isystem`, and GCC's separated
+`-target` and `-sysroot` spellings. It does not know `--target=`, `--sysroot=`,
+`--gcc-install-dir=` or `-rtlib=`.
+
+That was survivable while the compiler was always reached through the RTEMS tool prefix, because
+everything selecting the target came from the program *name*. It is not survivable for a compiler
+told its target by *flag*. Keeping whatever the table does not claim is a one-line change, after
+which `rtems-ld` resolves `libm.a` with no explicit library paths at all.
 
 ### `<gcov.h>` was not a header problem
 
