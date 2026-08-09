@@ -511,12 +511,23 @@ rebuilding, which is worth recording because two of them turned out not to be wo
 
 | flag | verdict |
 |---|---|
-| hand-repacked `libgcc_eh.a` | **still required** — see the correction below |
+| `-nostartfiles` + four crt objects | **removed** — the ToolChain supplies them, multilib-correct |
+| `-T linkcmds` | **removed** — the ToolChain supplies it |
+| `-stdlib=libstdc++` + three `-isystem` dirs | **removed** — Generic_GCC supplies the C++ include paths |
 | `-ftls-model=local-exec` | **removed** from here — moved into RTEMS's clang spec, see F6 |
-| `-L .../rv32imafc/ilp32f` (newlib) | **required** — it is doing multilib selection, not path hinting |
-| `-idirafter .../15.2.0/include` | **required**, for exactly one header: `<gcov.h>` |
-| `--sysroot`, `-rtlib=compiler-rt` | not workarounds — ordinary cross-compilation options |
-| `-nostartfiles` + four crt objects, `-stdlib=libstdc++` + three `-isystem` dirs | **required** — the `-qrtems` gap proper |
+| `-u<sym>` forcing | **replaced** by `-Wl,--undefined=`, which clang actually forwards |
+| hand-repacked `libgcc_eh.a` | **still required** — see the correction below |
+| two `-L` multilib paths | **still required, but not by the compiler** — see below |
+| `-idirafter .../15.2.0/include` | **still required**, for exactly one header: `<gcov.h>` |
+| `--sysroot`, `--gcc-install-dir`, `-rtlib=compiler-rt` | not workarounds — ordinary cross-compilation options |
+
+With the ToolChain in place the suite is byte-identical to the GCC baseline, so those removals cost
+nothing.
+
+The two `-L` entries are the interesting survivors: the compiler no longer needs them, because the
+ToolChain emits the multilib paths itself. They are there for **`rtems-ld`**, which resolves `-l`
+by running the compiler with `-print-search-dirs` but without the ABI flags, so it sees none of the
+multilib directories the driver would report. That is an RTEMS-side gap (F4), not a driver one.
 
 Three findings from that exercise:
 
