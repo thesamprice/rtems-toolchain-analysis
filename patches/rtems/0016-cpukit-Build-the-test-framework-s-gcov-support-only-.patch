@@ -1,0 +1,91 @@
+From f3e71ee24e578c898651d3fa260024aa0c49e5ef Mon Sep 17 00:00:00 2001
+From: Samuel Price <thesamprice@gmail.com>
+Date: Sat, 8 Aug 2026 21:49:28 -0400
+Subject: [PATCH 16/16] cpukit: Build the test framework's gcov support only
+ for GCC
+
+cpukit/include/rtems/test-gcov.h includes <gcov.h> unconditionally and uses
+gcov_info, __gcov_info_to_gcda() and __gcov_filename_to_gcfn().  That is
+GCC's coverage API, declared by GCC's own header; clang ships no <gcov.h>
+and provides no equivalent, so four sources in librtemstest fail to compile
+with it.
+
+The only way to build RTEMS with clang today is to add GCC's include
+directory to the search path by hand, which then imports every other GCC
+header along with it -- a blunt fix for a narrow problem, and one that
+quietly makes the build depend on a second compiler's headers.
+
+Move the four sources into an objects item gated on gcc, in the same way
+the architecture specific object groups are gated.  Verified both ways: the
+four objects are still built under GCC and the test suite is unchanged,
+and under clang the sources are skipped and the suite is byte identical to
+the GCC baseline without GCC's include directory on the search path.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ spec/build/cpukit/librtemstest.yml |  8 +++-----
+ spec/build/cpukit/objgcov.yml      | 25 +++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+), 5 deletions(-)
+ create mode 100644 spec/build/cpukit/objgcov.yml
+
+diff --git a/spec/build/cpukit/librtemstest.yml b/spec/build/cpukit/librtemstest.yml
+index 5e769fd856..3ea0494316 100644
+--- a/spec/build/cpukit/librtemstest.yml
++++ b/spec/build/cpukit/librtemstest.yml
+@@ -16,11 +16,10 @@ install:
+   - cpukit/include/rtems/test-printer.h
+   - cpukit/include/rtems/test-scheduler.h
+ install-path: ${BSP_LIBDIR}
+-links: []
++links:
++- role: build-dependency
++  uid: objgcov
+ source:
+-- cpukit/libtest/gcovdumpinfobase64.c
+-- cpukit/libtest/gcovdumpinfo.c
+-- cpukit/libtest/gcovinfoset.c
+ - cpukit/libtest/t-test-busy-tick.c
+ - cpukit/libtest/t-test-busy.c
+ - cpukit/libtest/t-test-checks-eno.c
+@@ -45,7 +44,6 @@ source:
+ - cpukit/libtest/testexit.c
+ - cpukit/libtest/testextension.c
+ - cpukit/libtest/testgcovbspreset.c
+-- cpukit/libtest/testgcovdumpinfo.c
+ - cpukit/libtest/testparallel.c
+ - cpukit/libtest/testprinter.c
+ - cpukit/libtest/testrun.c
+diff --git a/spec/build/cpukit/objgcov.yml b/spec/build/cpukit/objgcov.yml
+new file mode 100644
+index 0000000000..47985c60ef
+--- /dev/null
++++ b/spec/build/cpukit/objgcov.yml
+@@ -0,0 +1,25 @@
++SPDX-License-Identifier: CC-BY-SA-4.0 OR BSD-2-Clause
++build-type: objects
++cflags: []
++copyrights:
++- Copyright (C) 2020 embedded brains GmbH & Co. KG
++cppflags: []
++cxxflags: []
++description: |
++  The gcov support of the test framework.  It is built only for GCC because
++  it uses GCC's coverage API -- gcov_info, __gcov_info_to_gcda() and
++  __gcov_filename_to_gcfn() -- declared by GCC's own <gcov.h>.  clang ships
++  no such header and provides no equivalent, so building these sources with
++  clang fails outright unless GCC's include directory is added to the search
++  path by hand, which then imports every other GCC header along with it.
++enabled-by:
++- gcc
++includes: []
++install: []
++links: []
++source:
++- cpukit/libtest/gcovdumpinfobase64.c
++- cpukit/libtest/gcovdumpinfo.c
++- cpukit/libtest/gcovinfoset.c
++- cpukit/libtest/testgcovdumpinfo.c
++type: build
+-- 
+2.39.5 (Apple Git-154)
+

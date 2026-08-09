@@ -516,9 +516,9 @@ rebuilding, which is worth recording because two of them turned out not to be wo
 | `-stdlib=libstdc++` + three `-isystem` dirs | **removed** — Generic_GCC supplies the C++ include paths |
 | `-ftls-model=local-exec` | **removed** from here — moved into RTEMS's clang spec, see F6 |
 | `-u<sym>` forcing | **replaced** by `-Wl,--undefined=`, which clang actually forwards |
+| `-idirafter .../15.2.0/include` | **removed** — the gcov support is now gated on GCC |
 | hand-repacked `libgcc_eh.a` | **still required** — see the correction below |
 | two `-L` multilib paths | **still required, but not by the compiler** — see below |
-| `-idirafter .../15.2.0/include` | **still required**, for exactly one header: `<gcov.h>` |
 | `--sysroot`, `--gcc-install-dir`, `-rtlib=compiler-rt` | not workarounds — ordinary cross-compilation options |
 
 With the ToolChain in place the suite is byte-identical to the GCC baseline, so those removals cost
@@ -526,8 +526,25 @@ nothing.
 
 The two `-L` entries are the interesting survivors: the compiler no longer needs them, because the
 ToolChain emits the multilib paths itself. They are there for **`rtems-ld`**, which resolves `-l`
-by running the compiler with `-print-search-dirs` but without the ABI flags, so it sees none of the
-multilib directories the driver would report. That is an RTEMS-side gap (F4), not a driver one.
+by running the compiler with `-print-search-dirs`. `wscript` passed only `CFLAGS` to that probe and
+not `ABI_FLAGS`, so the compiler was asked as if for the build host and answered with the wrong
+multilib's directories; that is now fixed. It is **not** sufficient on its own — `rtems-ld` still
+reports `libm.a: Not found` without the explicit paths even though the directory holding it appears
+in the probe output, so something in how it consumes that output remains wrong. Passing the right
+flags is correct regardless, and the remaining fault is squarely in `rtems-ld`.
+
+### `<gcov.h>` was not a header problem
+
+`-idirafter` looked like a workaround for one missing header. It is not: `cpukit/libtest` uses
+`gcov_info`, `__gcov_info_to_gcda()` and `__gcov_filename_to_gcfn()`, which are **GCC's coverage
+API**. clang ships no `<gcov.h>` and has no equivalent, so the flag was not supplying a header, it
+was importing a second compiler's entire include directory to satisfy an API clang cannot provide.
+
+Four sources in `librtemstest` are affected. Moving them into an objects item gated on `gcc`, the
+same way the architecture specific object groups are gated, removes the flag entirely. Verified
+both ways: the four objects still build under GCC with the suite unchanged, and under clang they
+are skipped and the suite is byte-identical to the GCC baseline with no GCC include directory on
+the search path.
 
 Three findings from that exercise:
 
