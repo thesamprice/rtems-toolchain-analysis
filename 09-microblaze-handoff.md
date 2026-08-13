@@ -184,7 +184,40 @@ consumed by the control. This is the single highest-value instrument available a
 
 ---
 
-## 6. Traps — every one of these cost real time here
+## 6. Running log (newest last — update this when handing off)
+
+A dated record of every experiment against the `brtree` volume, so nobody re-runs or
+re-trusts one of these by accident. Convention: **state the setup verification result next to
+the outcome**; an outcome without one is not evidence.
+
+| # | date | run | setup verified? | outcome |
+|---|---|---|---|---|
+| 1 | 08-13 | full build, GCC 15, no workaround, Linux 6.18.7, stock kernel | yes (hindsight) | hang after `Run /init` |
+| 2 | 08-13 | entry.S 7-site patch, incremental rebuild | **no** — `patch --forward` skipped; then re-run with file copy: yes | panic SIGSEGV 0x0b |
+| 3 | 08-13 | entry.S 10-site patch (+3 `rted` sites) | yes (33 `C_ARG_SIZE` refs confirmed in tree) | identical panic |
+| 4 | 08-13 | `-O0 -fno-inline` on all C callees + 10-site patch | first attempt killed by live script edit; re-run: yes (CFLAGS confirmed in Makefile) | identical panic → **ABI spill ruled out as cause** |
+| 5 | 08-13 | control v1: workaround via `package/gcc/15.*/` patch drop | **no** — Buildroot patches at extract time; 0 hook refs in built source | invalid |
+| 6 | 08-13 | control v2: hook edited into extracted source | source yes, **binary no** — `host-gcc-final-rebuild` failed, stale cc1 booted | invalid |
+| 7 | 08-13 | control v3: `host-gcc-final-dirclean` + rebuild | GCC built and installed (cc1 16:16), but my mtime guard checked `gcc/cc1` instead of `build/gcc/cc1` and aborted before boot | no boot, but **left the workaround compiler installed** |
+| 8 | 08-13 | fault-dump build (`fault.c.debug`) | **no** — missing `#include <linux/sched/debug.h>`, kernel did not compile | invalid; include since fixed |
+| 9 | 08-13 | control v4: workaround cc1 (from #7) + pristine entry.S, Linux 6.18.7 | yes (build clean, banner confirmed) | **still hangs → this reproduction is not PR 121432** |
+| 10 | 08-13 | control v5: same, kernel switched to **6.12.81** (comment #45's known-good-with-workaround version) | n/a | build failed: `No hash found for linux-6.12.81.tar.xz` |
+| 11 | 08-13 | control v5b: sha256 appended to `package/linux/linux.hash` + `package/linux-headers/linux-headers.hash` | **no** — those paths do not exist; the `grep` on a missing file killed the script under `set -e` before `make` ran; the "boot tail" in the monitor was run 10's stale log | invalid (died in preconditions) |
+| 12 | 08-13 | control v5c: hash registered in the **real** files — current Buildroot keeps kernel hashes in versioned subdirs, `linux/before-6.17/linux.hash` and `linux/before-6.17/linux-headers.hash` — and all status written to `/out/c5c-status.txt` on the volume, because the host-side log filter has now swallowed two containers' stdout | hook refs + config + hash entries recorded in the status file pre-build | **running** |
+
+State of the `brtree` volume after run 12 launch: workaround-patched GCC 15.3.0 installed; `.config`
+pinned to custom kernel 6.12.81; both hash files carry the 6.12.81 entry; kernel tree is a fresh
+6.12.81 extract (pristine — the 10-site entry.S patch was for 6.18.7 and is **not** applied).
+
+Next planned runs, in order:
+- **v5b shell** → control v6: `host-gcc-final-dirclean` + rebuild **without** the hook (verify 0
+  refs in fresh source before building), `linux-dirclean`, boot → expect the genuine hang. Then
+  regenerate `fault.c.debug` against the 6.12.81 tree (the 6.18 one will not apply) and run the
+  dump on that failing baseline. Read `r1` first, then PC, then `PT_MSR` vs restored MSR.
+- **v5b no shell** → kernel version is not the confound; pin the Buildroot tree itself to its
+  ~Aug 2025 revision (the report's era) and repeat from the defconfig.
+
+## 7. Traps — every one of these cost real time here
 
 **Verify the setup before reading the outcome.** Four of seven failed runs produced a
 plausible-looking log from a build that did not contain the change under test. A run is worthless
@@ -192,6 +225,8 @@ until the **artefact** — not the source, not the makefile — is confirmed to 
 
 | trap | what happened |
 |---|---|
+| custom kernel versions need a registered hash | Buildroot hard-fails any tarball not listed in the package hash file, and the custom version propagates to `linux-headers` too. The hash files are **not** at `package/linux/` — current master keeps them in versioned subdirs: `linux/before-6.17/linux.hash`, `linux/from-6.17/linux.hash`, and matching `linux-headers.hash`. Get the sha256 from `https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc`. |
+| container stdout is unreliable here | a host-side log filter reduced two containers' entire output to an empty summary. **Write all status to a file on the mounted volume** and read that; never diagnose from `docker logs`. |
 | `patch --forward` silently skips | a file already carrying an earlier revision of the same change gets skipped; the rebuild produced a kernel without the new hunks, and the boot looked like "the extra sites made no difference". **Copy the whole patched file instead.** |
 | editing a script a container is reading | bind mounts are live and bash reads incrementally; a mid-run edit produced a syntax error at whatever line the shell reached, exit 2, and left a stale log that looked like a result. **Copy the script to a frozen path before launching.** |
 | Buildroot patches apply at *extract* time | dropping a `.patch` into `package/gcc/15.*/` after extraction does nothing. Patch the extracted tree directly. |
