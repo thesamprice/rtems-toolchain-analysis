@@ -3,9 +3,10 @@
 Read [08-microblaze-ira-callee-save.md](08-microblaze-ira-callee-save.md) first for the analysis.
 This is the operational state: what is proven, what is not, what to run next, and what to avoid.
 
-**One-line status:** the GCC-side conclusion is solid and ready to send; the RTEMS bug is real and
-patched; **PR 121432 is reproduced with a validated A/B on Linux 6.12.81** — workaround → shell,
-pristine GCC 15.3 → hang — and the fault-dump run against the real failing baseline is in flight.
+**One-line status:** **ROOT CAUSE FOUND AND VERIFIED** — `entry.S`'s syscall dispatch (site 11,
+`bra r12`) calls every syscall handler with `r1` at the `pt_regs` base, so GCC 15's argument
+spill lands on `PT_R1` and init returns to user space with `AT_FDCWD` as its stack pointer. The
+11-site fix is being boot-tested. GCC-side conclusion unchanged and ready; RTEMS patch stands.
 
 ---
 
@@ -216,7 +217,8 @@ the outcome**; an outcome without one is not evidence.
 | 14 | 08-13 | control v5e: flip declared headers series `BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18` → `_6_12`, `olddefconfig`, resume | series flip verified in `.config` pre-build; `Linux version 6.12.81` banner confirmed | **SHELL REACHED** — syslogd, DHCP lease, crond, `buildroot login:`. **Positive control passes; harness is valid.** The 6.18.7 hang was a separate kernel-side issue, exactly comment #45's second problem. |
 | 15 | 08-13 | control v6: remove workaround via `host-gcc-final-dirclean` + rebuild, gate on hook refs = 0 after re-extract | **gate fired**: after a full 25-min rebuild, the re-extracted source still had 3 hook refs. Cause: run 5's `0003-gcc-config-microblaze-fix-ira-for-GCC15.patch` was still in `package/gcc/15.3.0/` — inert while the source stayed extracted, **applied automatically the moment dirclean re-ran the extract step**. The gate correctly refused to boot | invalid baseline prevented; 25 min spent, no bad data produced |
 | 16 | 08-13 | control v6b: stray patch removed, dirclean + rebuild + gates + boot | **all gates green**: leftover patches none, hook refs after re-extract **0**, cc1 mtime changed, BUILD_RC=0, banner = pristine 15.3.0 | **NO SHELL — hang after `Run /init`. Genuine failing baseline established.** With run 14 this is a validated A/B on identical 6.12.81 kernels: workaround → shell, pristine → hang. **PR 121432 reproduced; GCC 15.3 still carries it** (15.2-pinning contingency moot) |
-| 17 | 08-13 | fault dump on the failing baseline: `fault-6.12.c.debug` (regenerated from the 6.12.81 tree, `show_regs` include present) installed over `mm/fault.c`, `linux-rebuild`, boot. Gates: hook refs 0 (baseline compiler untouched), BADFAULT present in tree | scripted pre-boot | **running** — the `r1`-plausibility question finally gets asked against the real bug |
+| 17 | 08-13 | fault dump on the failing baseline | gates green | **THE DUMP FIRED AND NAMED THE ROOT CAUSE**: `BADFAULT: pid=1 comm=init addr=0000003c`, `r1=FFFFFF9C` = **-100 = AT_FDCWD**, PC in user text, `esr=0x1012` (data TLB miss, delay slot), `SEGV_MAPERR`. Init was returned to user space with a syscall argument as its stack pointer. See "Root cause" below |
+| 18 | 08-13 | fix test: 11-site entry.S patch (the 10 ported sites **plus the syscall dispatch**) on the failing baseline; gates: pristine compiler, 26 `C_ARG_SIZE` refs in tree | scripted pre-boot | **running** — expect shell |
 
 State of the `brtree` volume after run 17 launch: workaround-patched GCC 15.3.0 installed; `.config`
 pinned to custom kernel 6.12.81; both hash files carry the 6.12.81 entry; kernel tree is a fresh
@@ -229,6 +231,62 @@ Next planned runs, in order:
   dump on that failing baseline. Read `r1` first, then PC, then `PT_MSR` vs restored MSR.
 - **v5b no shell** → kernel version is not the confound; pin the Buildroot tree itself to its
   ~Aug 2025 revision (the report's era) and repeat from the defconfig.
+
+## Root cause (run 17, verified at every link)
+
+**`entry.S`'s syscall dispatch hands every syscall handler a frame whose ABI argument save area
+is `pt_regs` itself, and the first-argument spill slot is the saved user stack pointer.**
+
+The chain, each link from an artifact:
+
+1. **The register dump** (kernel's own `show_regs`, run 17): init dies at a user-text PC with
+   `r1 = 0xFFFFFF9C` = **-100** = **`AT_FDCWD`** — the classic first argument of every `*at`
+   syscall — and faults at `ear=0x3C` (`r1` + small offset), `esr=0x1012` = data TLB miss in a
+   delay slot, `SEGV_MAPERR`.
+2. **`PT_R1` is `pt_regs+4`** — `include/generated/asm-offsets.h`: `#define PT_R1 4`. The
+   callee's first-argument spill slot is `caller_sp+4`. They are the same address.
+3. **The dispatch site** — `entry.S:425`:
+   ```
+   	lwi	r12, r12, sys_call_table
+   	addi	r15, r0, ret_from_trap-8
+   	bra	r12
+   ```
+   Every syscall enters its C handler with `r1` still at the `pt_regs` base. This is **site 11**
+   — missed by both audits because it is a bare `bra`, not `bralid/brlid/brald/rtbd/rted`.
+4. **The spill is real and everywhere** — one `objdump` sweep of the failing vmlinux found
+   **11,239 functions** storing through `r1` into their caller's argument area (legal: every C
+   caller reserves it). Among the *direct* callees of asm sites: dozens of `__se_sys_*` spill
+   `r5` (arg1) to `caller_sp+4` (`__se_sys_fchmodat`, `sys_rt_sigreturn`, `__se_sys_wait4`, …
+   — see `evidence/microblaze-ira/spill-scan-direct-hits.txt`), and `full_exception` spills `r4`
+   to `caller_sp+4`. Tail-call shims widen the set: a frameless `__se_sys_faccessat` branching to
+   `do_faccessat` makes *that* function's spill land in `pt_regs`.
+5. **Why GCC 15 exposed it** — `3b9b8d6cfdf5` made callee-saved registers expensive, so IRA
+   started choosing caller-save + spill for incoming arguments. The entitlement existed since
+   forever (`REG_PARM_STACK_SPACE`); GCC 15 just started using it. Every syscall then overwrites
+   `PT_R1` with its own first argument; init's first `*at` call sets the user SP to `AT_FDCWD`.
+
+This also retro-explains the two puzzles that derailed the ABI theory earlier:
+
+- **The `-O0` experiment changed nothing** because it forced `-O0` on `irq.c`, `signal.c`,
+  `exceptions.c`, `fault.c` — never on the syscall bodies (`fs/open.c` etc.), which are the
+  functions the dispatch site actually calls.
+- **The 10-site patch changed the failure without fixing it** because the eleventh site — the
+  most-executed one — was still corrupting `PT_R1` on every syscall.
+
+The fix (run 18, in flight) adds the dispatch site with the same trampoline pattern:
+
+```
+	addi	r15, r0, 4f-8
+	addik	r1, r1, -C_ARG_SIZE
+	bra	r12
+4:	addik	r1, r1, C_ARG_SIZE
+	bri	ret_from_trap
+```
+
+**Audit rule that would have found site 11 on day one:** enumerate asm→C call sites by looking
+for **`r15` being set** (`addi/addik r15, r0, <label>` plus the link-forms `bralid/brlid/brald`),
+not by grepping branch mnemonics. Setting up a return address is the one thing every call must
+do; the branch instruction can be anything.
 
 ## 7. Traps — every one of these cost real time here
 
