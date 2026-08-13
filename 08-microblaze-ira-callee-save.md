@@ -297,6 +297,31 @@ after `Run /init as init process`; the patched one panics with SIGSEGV on init. 
 the mechanism is real and evidence the fix is incomplete, and it is easy to report only the first
 half.
 
+### The control that has not yet run
+
+**Nothing on the Linux side should be reported upstream until this passes.** The question it
+answers: does Buildroot's workaround make *this* build boot? If yes, the reproduction here is
+PR 121432 and the conclusions hold. If no, this is a different failure -- Linux 6.18.7, the
+machine model, or the defconfig -- and every Linux-side conclusion in this file is void.
+Comment #45's "stalls after 10 seconds on kernels newer than 4.19 with any compiler" is the
+obvious suspect.
+
+Two attempts, both invalid, both for setup reasons rather than results:
+
+| attempt | what went wrong |
+|---|---|
+| v1 | Dropped the workaround `.patch` into `package/gcc/15.*/`. Buildroot applies package patches at **extract** time, so a patch added afterwards is ignored. Build log: 0 occurrences of `fix-ira-for-GCC15`; built source: 0 of `TARGET_CALLEE_SAVE_COST`. Tested an unpatched compiler. |
+| v2 | Patched `microblaze.cc` directly in both extracted trees -- verified, 3 refs each -- but `make host-gcc-final-rebuild` failed on missing `.files-list-*.before` and the compiler was never rebuilt. The boot used the stale binary. |
+
+For v3: rebuild with `make host-gcc-final-dirclean host-gcc-final` (or a full toolchain rebuild),
+and verify the **`cc1` binary's mtime changed** before booting. Checking that the *source* carries
+the hook is not sufficient -- v2 checked exactly that and still tested the old compiler.
+
+The pattern across all of these is one mistake repeated: **verifying the outcome without first
+verifying the setup**. Four of the five failed runs in this file produced a plausible-looking log
+from a build that did not contain the change under test. A run is worthless until the artefact
+-- not the source, not the makefile, the artefact -- is confirmed to differ.
+
 ## 9. How this was identified, and how to debug the next one
 
 The whole question — *is the compiler wrong?* — turns on one thing: **what does the ABI say about
