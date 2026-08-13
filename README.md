@@ -14,6 +14,7 @@ work needed to do the equivalent in LLVM/Clang.
 | [05](05-clang-riscv-bringup.md) | **Building RTEMS for RISC-V with Clang** — the experiment, and the twelve things that broke |
 | [06](06-libdl-and-lld.md) | **Getting the `dl` tests working** — a TLS model mismatch, and where lld and GNU ld disagree |
 | [07](07-reaching-gcc-parity.md) | **Reaching parity with GCC** — the last eight failures, and why six of them were not compiler bugs |
+| [08](08-microblaze-ira-callee-save.md) | **The MicroBlaze "GCC 15 regression"** — why it is an ABI violation in Linux rather than a compiler bug, in a four-line reproducer that fails on GCC 12 |
 | [BUGS.md](BUGS.md) | **Every bug found — fixed, worked around, and still open** |
 | [`patches/`](patches/) | The fixes: three LLVM/lld, eleven RTEMS, two rtems-tools, one QEMU |
 | [`repro/`](repro/) | The `config.ini` carrying the remaining workarounds |

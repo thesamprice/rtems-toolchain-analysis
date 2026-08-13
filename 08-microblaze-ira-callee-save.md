@@ -1,0 +1,207 @@
+# The MicroBlaze "GCC 15 regression" is an ABI violation in Linux, not a compiler bug
+
+GCC 15 broke the MicroBlaze Linux kernel. Buildroot carries a GCC patch to work around it, and
+[PR 121432](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=121432) has been open since August 2025
+arguing about whose bug it is.
+
+**It is not a compiler bug.** The MicroBlaze ABI requires the *caller* to reserve space for the
+callee's incoming register arguments, and permits the callee to spill them there.
+`arch/microblaze/kernel/entry.S` does not reserve it before calling into C. GCC has always been
+allowed to emit that store; GCC 15 merely started doing it more often.
+
+The reproducer is four lines of C and it fails the same way on **GCC 12**.
+
+---
+
+## 1. What happened
+
+| | |
+|---|---|
+| `3b9b8d6cfdf5` (GCC 15) | IRA scales callee-save cost by entry-block frequency |
+| effect | callee-saved registers get expensive; IRA prefers caller-save + spill |
+| symptom | MicroBlaze Linux boots to `Run /init as init process`, then hangs |
+| bisected to | that commit, by Buildroot |
+| Buildroot's response | [a GCC patch](evidence/microblaze-ira/buildroot-0002-gcc-config-microblaze-fix-ira-for-GCC15.patch) adding `TARGET_CALLEE_SAVE_COST` returning constant `1` |
+
+The IRA change itself is three lines in `gcc/ira-color.cc`:
+
+```c
+ 	    add_cost = ((ira_memory_move_cost[mode][rclass][0]
+ 		         + ira_memory_move_cost[mode][rclass][1])
+ 		        * saved_nregs / hard_regno_nregs (hard_regno,
+-							  mode) - 1);
++							  mode) - 1)
++		       * (optimize_size ? 1 :
++			  REG_FREQ_FROM_BB (ENTRY_BLOCK_PTR_FOR_FN (cfun)));
+```
+
+It was written for PR 111673: without the scaling, IRA would pick a callee-save register even
+when caller-save registers were free, defeating shrink-wrapping.
+
+## 2. The ABI contract
+
+`gcc/config/microblaze/microblaze.cc:2100-2117` documents the frame:
+
+```
+             Before call		        After call
+        +-----------------------+	+-----------------------+
+   high |  local variables,     |	|  local variables,	|
+   mem. |  callee saved and     |       |  callee saved and    	|
+	|  temps     		|       |  temps     	        |
+        +-----------------------+	+-----------------------+
+        |  arguments for called	|       |  arguments for called |
+	|  subroutines		|	|  subroutines  	|
+        |  (optional)           |       |  (optional)           |
+        +-----------------------+	+-----------------------+
+	|  Link register 	|	|  Link register        |
+    SP->|                       |       |                       |
+```
+
+"arguments for called subroutines" sits in the **caller's** frame, above the link register slot.
+That is the area a callee may use to spill the arguments it received in `r5`–`r10`.
+
+This is not a reading of prose. Every caller GCC emits reserves it —
+[`caller-frame.c`](evidence/microblaze-ira/caller-frame.c):
+
+```
+caller:
+	.frame	r1,32,r15		# vars= 0, regs= 1, args= 24
+```
+
+**`args= 24`** — 24 bytes, six argument words, in a function whose own locals are empty.
+
+## 3. The reproducer
+
+[`spill-incoming-arg.c`](evidence/microblaze-ira/spill-incoming-arg.c), in full:
+
+```c
+extern void use (int *p);
+void spill_arg (int a) { use (&a); }
+```
+
+Taking the address of a register parameter forces it to memory. Where does it go?
+
+```
+spill_arg:
+	.frame	r1,28,r15		# vars= 0, regs= 0, args= 24
+	addik	r1,r1,-28
+	swi	r5,r1,32        <-- r1+32, four bytes ABOVE this 28-byte frame
+```
+
+`r1+32` is `caller_sp + 4` — the first argument slot in the caller's frame. Compare the kernel's
+`do_IRQ` as built by GCC 15 (PR 121432 comment #11):
+
+```
++   0:  3021ffe0        addik   r1, r1, -32
++   c:  f8a10024        swi     r5, r1, 36     <-- r1+36 = caller_sp + 4
+```
+
+Same construct. **The reproducer above was compiled with GCC 12.4.1**, three major versions before
+the "regression". This codegen is not new and not a GCC 15 behaviour.
+
+## 4. Where the kernel breaks
+
+Gopi Kumar Bulusu identified this in PR 121432 comments #19 and #27. `C_ENTRY(_interrupt)` does:
+
+```asm
+        addik   r1, r1, -PT_SIZE
+        SAVE_REGS
+        ...
+        swi     r11, r1, PT_R1
+```
+
+It allocates `PT_SIZE` for `pt_regs` and nothing else. There is no argument save area between
+`pt_regs` and the C function it then calls, so `do_IRQ`'s `swi r5, r1, 36` lands inside
+`pt_regs` — on `PT_R1`, the saved stack pointer.
+
+GCC 14 assigned `r22`, a callee-saved register, and never needed the spill slot. The kernel worked
+by luck. GCC 15's costing removed the luck.
+
+## 5. Why the Buildroot patch should not be upstreamed
+
+The patch adds:
+
+```c
+static int
+microblaze_callee_save_cost (spill_cost_type, unsigned int hard_regno, machine_mode,
+		       unsigned int, int mem_cost, const HARD_REG_SET &, bool)
+{
+  return 1;
+}
+```
+
+Four objections, in increasing order of seriousness:
+
+**It ignores every parameter.** `hard_regno`, `mode` and `mem_cost` are all unused. It is not a
+cost function; it is a constant that happens to restore pre-GCC-15 behaviour.
+
+**The cited model does not do this.** The patch points at i386 as precedent. `i386.cc:21231-21245`
+returns `1` only when `mem_cost <= 2` or when optimising for size, and `mem_cost - 2` otherwise,
+with a comment explaining push/pop encoding sizes. It is a real cost function.
+
+**It disables a correctness-adjacent optimisation globally.** Every MicroBlaze compilation loses
+the shrink-wrapping behaviour `3b9b8d6cfdf5` exists to enable, so that one project's hand-written
+assembly keeps working.
+
+**Its own author says it is wrong.** PR 121432 comment #10, Romain Naour: *"This is probably not
+the correct fix... I hope it help."*
+
+**And it does not actually fix the kernel.** Comment #25 reports the same failure class in
+`signal.c:do_notify_resume`; comment #45 reports the system still stalling with the Buildroot
+patch applied across five kernel versions.
+
+## 6. The real fix
+
+`arch/microblaze/kernel/entry.S` must reserve the argument save area before calling C. That is a
+Linux patch, not a GCC one.
+
+It is not a one-liner: comment #25 found `do_notify_resume` affected too, and comment #45 shows
+the current attempt causing an illegal-opcode exception in kernel mode. Every assembly site that
+calls into C needs auditing.
+
+If something *is* wanted in GCC, the defensible change is a genuine `TARGET_CALLEE_SAVE_COST`
+using `mem_cost` and `hard_regno`, justified by MicroBlaze's real spill costs — a separate patch
+that does not claim to fix this bug.
+
+## 7. How this was identified, and how to debug the next one
+
+The whole question — *is the compiler wrong?* — turns on one thing: **what does the ABI say about
+who owns the memory being written?** Everything else is noise. The method:
+
+**Read the store, not the diff.** The assembly diff in comment #11 looks like a register allocation
+difference, and that framing sent the discussion toward IRA. The signal is in a single
+instruction: `swi r5, r1, 36` against `addik r1, r1, -32`. An offset larger than the frame size is
+a write *outside* the frame. That is either an ABI-sanctioned access to the caller's frame, or a
+bug — and which one is a documented fact, not a matter of opinion.
+
+**Ask the backend, not the manual.** `microblaze.cc:2100` carries the frame diagram. The compiler's
+own source is the authority on what the compiler believes the ABI is, and it is what a maintainer
+will be persuaded by.
+
+**Then confirm it empirically, in both directions.** Two four-line files settle it:
+`caller-frame.c` shows callers reserving the area (`args= 24`), `spill-incoming-arg.c` shows
+callees using it. Neither needs the failing configuration, a kernel, or QEMU.
+
+**Reproduce on the oldest compiler you have.** This was the step that decided it. The bug is framed
+as a GCC 15 regression, so the instinct is to reach for GCC 15. Running the reproducer on GCC 12
+showed the same store — which proves the codegen is not new, so GCC 15 cannot be where the defect
+was introduced. A "regression" that reproduces three versions earlier is an exposure, not a
+regression. Sam James said as much in comment #1 — *"That commit means it was latent"* — before
+anyone had the mechanism.
+
+**Distrust a fix that restores old behaviour.** `return 1` does not encode a fact about MicroBlaze.
+A fix that makes a symptom disappear by reverting a cost model, without explaining what the correct
+cost is, is a workaround. That the workaround does not fully work (comment #45) is the expected
+outcome, not a surprise.
+
+Time to the conclusion was about fifteen minutes, none of it spent building anything. The failing
+configuration — Linux, QEMU, GCC 15 — is where the bug *shows up*, and it is the most expensive
+place to study it.
+
+## 8. What is not established here
+
+- **No GCC 15 build was made.** The mechanism is demonstrated on GCC 12; the exact `do_IRQ`
+  allocation from comment #11 is taken from the bug report, not reproduced locally.
+- **No kernel fix is proposed or tested.** Section 6 says where it belongs, not what it is.
+- **The second failure in comment #45** — stalls after `init` on kernels newer than 4.19 with *any*
+  compiler, including GCC 13 and 14 — is a separate issue and is untouched by any of this.

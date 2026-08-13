@@ -1,0 +1,38 @@
+$ microblaze-rtems7-gcc --version | head -1
+microblaze-rtems7-gcc (GCC) 12.4.1 20240905 (RTEMS 7, Build 2026.06.12, RSB 105f43d299cb5c367fc5f2b0147f401721ed3d9c-modified, Newlib 7d4336cf)
+
+$ microblaze-rtems7-gcc -O2 -S caller-frame.c
+caller:
+	.frame	r1,32,r15		# vars= 0, regs= 1, args= 24
+	.mask	0x00088000
+	addik	r1,r1,-32
+	swi	r19,r1,28
+	swi	r15,r1,0
+	brlid	r15,other
+	
+	addk	r19,r5,r0
+	brlid	r15,callee
+	
+	addk	r5,r19,r0
+	lwi	r15,r1,0
+	lwi	r19,r1,28
+	rtsd	r15,8 
+	
+	addik	r1,r1,32
+	.end	caller
+
+$ microblaze-rtems7-gcc -O2 -S spill-incoming-arg.c
+spill_arg:
+	.frame	r1,28,r15		# vars= 0, regs= 0, args= 24
+	.mask	0x00008000
+	addik	r1,r1,-28
+	swi	r5,r1,32
+	swi	r15,r1,0
+	brlid	r15,use
+	
+	addik	r5,r1,32
+	lwi	r15,r1,0
+	rtsd	r15,8 
+	
+	addik	r1,r1,28
+	.end	spill_arg
