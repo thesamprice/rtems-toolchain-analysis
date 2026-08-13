@@ -198,7 +198,34 @@ Time to the conclusion was about fifteen minutes, none of it spent building anyt
 configuration — Linux, QEMU, GCC 15 — is where the bug *shows up*, and it is the most expensive
 place to study it.
 
-## 8. What is not established here
+## 8. The GCC-side deliverable: a test, not a fix
+
+There is no GCC bug to fix, but there is a GCC gap: nothing in the testsuite states this contract,
+which is why PR 121432 spent fifty comments unable to settle it. Comment #26 asks *"Are you
+absolutely sure that there is an issue in the assembly code?"* and the thread never answers.
+
+[`patches/gcc/reg-parm-stack-space.c`](patches/gcc/reg-parm-stack-space.c) is a
+`gcc.target/microblaze` test asserting both halves of the contract, and it is independently
+upstreamable — it documents intended behaviour and does not depend on who fixes the kernel.
+
+The assertion is on `REG_PARM_STACK_SPACE`, expressed through the `.frame` directive:
+
+```
+/* { dg-final { scan-assembler-times "args= 24" 2 } } */
+```
+
+`24` is `MAX_ARGS_IN_REGISTERS * UNITS_PER_WORD` (`microblaze.h:441`, `:454`). Verified against
+GCC 12.4.1: exactly two matches.
+
+The store offset itself is deliberately *not* asserted, because it is not stable — at `-O0` the
+frame pointer is `r19` and the spill is `swi r5,r19,36`; at `-O1`/`-O2`/`-Os` it is
+`swi r5,r1,32`. `args= 24` holds at every level.
+
+`REG_PARM_STACK_SPACE` being non-zero is the formal statement of the contract, and is stronger
+evidence than the frame diagram in §2: it is what tells the middle end that the caller owns, and
+must allocate, that memory.
+
+## 9. What is not established here
 
 - **No GCC 15 build was made.** The mechanism is demonstrated on GCC 12; the exact `do_IRQ`
   allocation from comment #11 is taken from the bug report, not reproduced locally.
