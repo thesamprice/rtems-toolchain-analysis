@@ -234,7 +234,50 @@ If something *is* wanted in GCC, the defensible change is a genuine `TARGET_CALL
 using `mem_cost` and `hard_regno`, justified by MicroBlaze's real spill costs — a separate patch
 that does not claim to fix this bug.
 
-## 8. How this was identified, and how to debug the next one
+## 8. Debugging notes, including the mistakes
+
+Kept because the errors were more instructive than the successes, and two of them cost real time.
+
+**The reproduction environment.** Buildroot cannot run on macOS: it rejects `/usr/bin/gcc` for
+being clang. It also refuses to configure as root, which is the default in a container. So the
+working recipe is a Debian container, deps installed as root, build run as an unprivileged user,
+tree on a named docker volume so it survives. First full build: ~33 min for toolchain, kernel and
+rootfs. Incremental kernel rebuild afterwards: ~4 min.
+
+**Build it somewhere it survives.** The first two container runs put the tree in the container's
+own filesystem, so every patch iteration would have meant another full toolchain build. Moving
+`/br` to a named volume cost seven minutes of restart and saved an hour per iteration.
+
+**`patch --forward` silently skips a file that already carries an earlier revision of the same
+change.** A second patch revision was applied on top of the first, reported `(already applied?)`,
+and the rebuild produced a kernel without the new hunks. The boot result looked like "the extra
+sites made no difference" when in truth they were never compiled in. Copying the whole patched
+file in is unambiguous; `patch` is not, when iterating.
+
+**Do not edit a script a running container is reading.** Bind mounts are live and bash reads
+scripts incrementally. Editing `rebuild.sh` mid-run produced a syntax error at the line the shell
+happened to reach, killed the run with exit 2, and left a stale `boot-patched.log` that looked
+like a real result. Copy the script to a frozen path before launching.
+
+**Grep for the instruction, not the idiom.** The first audit of `entry.S` searched for
+`bralid|brlid|brald|rtbd` and reported "every call site that passes arguments". It missed three,
+because they use `rted`: `full_exception` and two `do_page_fault` calls. `do_page_fault` runs on
+every demand-paging fault, so that omission looked like it had to be the answer. It was not --
+adding all three changed nothing -- but the audit was wrong regardless, and stating it as complete
+was worse than the omission.
+
+**Trace the return address at every call site, not just the first.** `entry.S` has two return
+conventions. Where `r15` is the branch itself the callee returns after the delay slot; where
+`r15` is `label - 8` it returns to the label, skipping anything in between. The first draft of the
+patch put the stack restore after the delay slot at a `label - 8` site, where it would never have
+executed. Nothing in review caught it; tracing `r15` at each site did.
+
+**A patch that changes the failure is not a patch that fixes it.** The unpatched kernel hangs
+after `Run /init as init process`; the patched one panics with SIGSEGV on init. That is evidence
+the mechanism is real and evidence the fix is incomplete, and it is easy to report only the first
+half.
+
+## 9. How this was identified, and how to debug the next one
 
 The whole question — *is the compiler wrong?* — turns on one thing: **what does the ABI say about
 who owns the memory being written?** Everything else is noise. The method:
@@ -269,7 +312,7 @@ Time to the conclusion was about fifteen minutes, none of it spent building anyt
 configuration — Linux, QEMU, GCC 15 — is where the bug *shows up*, and it is the most expensive
 place to study it.
 
-## 9. The GCC-side deliverable: a test, not a fix
+## 10. The GCC-side deliverable: a test, not a fix
 
 There is no GCC bug to fix, but there is a GCC gap: nothing in the testsuite states this contract,
 which is why PR 121432 spent fifty comments unable to settle it. Comment #26 asks *"Are you
@@ -296,7 +339,7 @@ frame pointer is `r19` and the spill is `swi r5,r19,36`; at `-O1`/`-O2`/`-Os` it
 evidence than the frame diagram in §2: it is what tells the middle end that the caller owns, and
 must allocate, that memory.
 
-## 10. What is not established here
+## 11. What is not established here
 
 - **No GCC 15 build was made.** The mechanism is demonstrated on GCC 12; the exact `do_IRQ`
   allocation from comment #11 is taken from the bug report, not reproduced locally.
