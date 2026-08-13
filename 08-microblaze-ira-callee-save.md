@@ -297,7 +297,32 @@ after `Run /init as init process`; the patched one panics with SIGSEGV on init. 
 the mechanism is real and evidence the fix is incomplete, and it is easy to report only the first
 half.
 
-### The control that has not yet run
+### The control result: this reproduction is not PR 121432
+
+On the fourth attempt the control ran. **With Buildroot's workaround compiled into GCC and a
+pristine `entry.S`, the build still hangs** -- same place, after `Run /init as init process`, a
+hang rather than a panic, killed by the timeout.
+
+| build | outcome |
+|---|---|
+| GCC 15, no workaround, stock kernel | hang after `Run /init` |
+| GCC 15, no workaround, entry.S patched | panic, SIGSEGV on init |
+| **GCC 15 + workaround, stock kernel** | **hang after `Run /init`** |
+
+Comment #45 reports that with the Buildroot patch you reach a shell. Here it changes nothing. So
+whatever hangs this build is **not** the bug PR 121432 describes, and no Linux-side conclusion
+drawn from this reproduction is worth anything -- including the claim that the entry.S patch
+"changes the failure mode", which was measured against a failure that is not the reported one.
+
+The likely candidate is comment #45's second issue: stalls on kernels newer than 4.19 with *any*
+compiler. This is Linux 6.18.7. Reproducing the actual report probably needs the kernel version
+Buildroot's qemu_microblazeel_mmu_defconfig shipped at the time, not current master.
+
+Caveat on this result: the container log filter swallowed the precondition output, so the boot was
+confirmed but "the installed cc1 truly contains the workaround" rests on the source carrying three
+references and the binary's mtime post-dating the patch. Strong, not conclusive.
+
+### History of the four control attempts
 
 **Nothing on the Linux side should be reported upstream until this passes.** The question it
 answers: does Buildroot's workaround make *this* build boot? If yes, the reproduction here is
