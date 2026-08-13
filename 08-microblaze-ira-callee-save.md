@@ -9,7 +9,9 @@ callee's incoming register arguments, and permits the callee to spill them there
 `arch/microblaze/kernel/entry.S` does not reserve it before calling into C. GCC has always been
 allowed to emit that store; GCC 15 merely started doing it more often.
 
-The reproducer is four lines of C and it fails the same way on **GCC 12**.
+The reproducer is four lines of C and it fails the same way on **GCC 12**. The defect and the fix
+are both demonstrated end to end under QEMU in [`repro/microblaze-entry/`](repro/microblaze-entry/),
+bare-metal, with no Linux toolchain and no kernel build (§6).
 
 ---
 
@@ -150,7 +152,36 @@ the correct fix... I hope it help."*
 `signal.c:do_notify_resume`; comment #45 reports the system still stalling with the Buildroot
 patch applied across five kernel versions.
 
-## 6. The real fix
+## 6. Demonstrating it, and the fix, without Linux
+
+The defect is in assembly, so it can be reproduced in assembly. No kernel, no Buildroot, no
+container — [`repro/microblaze-entry/`](repro/microblaze-entry/) is a bare-metal MicroBlaze
+program that runs under `qemu-system-microblaze` in about two minutes.
+
+`entry_repro.S` mirrors `C_ENTRY(_interrupt)`: allocate `PT_SIZE`, stash a sentinel at `PT_R1`,
+call a C handler with `r5 = r1`. The handler is a `do_IRQ` stand-in whose incoming argument must
+go to memory, and GCC gives it exactly the store from comment #11:
+
+```
+handler:
+	.frame	r1,28,r15		# vars= 0, regs= 0, args= 24
+	addik	r1,r1,-28
+	swi	r5,r1,32        <-- caller_sp + 4
+```
+
+`FIX_ARGS_AREA=1` lowers `r1` by `C_ARG_SIZE` across the call and restores it after:
+
+| | `PT_R1` after the call | |
+|---|---|---|
+| `entry.S` as it is today | `0x90010160` | **CORRUPTED** |
+| argument save area reserved | `0xfeedface` | **INTACT** |
+
+The corrupt value is a stack address — it is `&regs`, spilled by the callee onto `PT_R1`.
+
+This is the whole bug and the whole fix, on a host with no Linux toolchain at all, using the
+GCC 12.4.1 already in the RTEMS toolchain.
+
+## 7. The real fix
 
 `arch/microblaze/kernel/entry.S` must reserve the argument save area before calling C. That is a
 Linux patch, not a GCC one.
@@ -163,7 +194,7 @@ If something *is* wanted in GCC, the defensible change is a genuine `TARGET_CALL
 using `mem_cost` and `hard_regno`, justified by MicroBlaze's real spill costs — a separate patch
 that does not claim to fix this bug.
 
-## 7. How this was identified, and how to debug the next one
+## 8. How this was identified, and how to debug the next one
 
 The whole question — *is the compiler wrong?* — turns on one thing: **what does the ABI say about
 who owns the memory being written?** Everything else is noise. The method:
@@ -198,7 +229,7 @@ Time to the conclusion was about fifteen minutes, none of it spent building anyt
 configuration — Linux, QEMU, GCC 15 — is where the bug *shows up*, and it is the most expensive
 place to study it.
 
-## 8. The GCC-side deliverable: a test, not a fix
+## 9. The GCC-side deliverable: a test, not a fix
 
 There is no GCC bug to fix, but there is a GCC gap: nothing in the testsuite states this contract,
 which is why PR 121432 spent fifty comments unable to settle it. Comment #26 asks *"Are you
@@ -225,7 +256,7 @@ frame pointer is `r19` and the spill is `swi r5,r19,36`; at `-O1`/`-O2`/`-Os` it
 evidence than the frame diagram in §2: it is what tells the middle end that the caller owns, and
 must allocate, that memory.
 
-## 9. What is not established here
+## 10. What is not established here
 
 - **No GCC 15 build was made.** The mechanism is demonstrated on GCC 12; the exact `do_IRQ`
   allocation from comment #11 is taken from the bug report, not reproduced locally.
