@@ -157,6 +157,10 @@ Scripts in the session scratchpad (copy them somewhere permanent):
 - `patches/` — `entry.S.full` (10-site patch), `entry.S.pristine`, `fault.c.debug`,
   `gcc-workaround.patch`
 
+**Ask Buildroot, don't guess:** `make -s printvars VARS="LINUX_HEADERS_HASH_FILES LINUX_HASH_FILES"`
+prints exactly which files the infra will consult — gate scripted changes on that output instead of
+asserting a path. This ended a three-run guessing streak about hash-file layout.
+
 Boot cmdline now includes `panic=1 print-fatal-signals=1`, and `-no-reboot` makes QEMU **exit at
 the panic** instead of spinning in the panic path for the whole timeout — which is what previously
 buried the useful part of the trace under tens of thousands of post-mortem interrupts.
@@ -203,9 +207,11 @@ the outcome**; an outcome without one is not evidence.
 | 9 | 08-13 | control v4: workaround cc1 (from #7) + pristine entry.S, Linux 6.18.7 | yes (build clean, banner confirmed) | **still hangs → this reproduction is not PR 121432** |
 | 10 | 08-13 | control v5: same, kernel switched to **6.12.81** (comment #45's known-good-with-workaround version) | n/a | build failed: `No hash found for linux-6.12.81.tar.xz` |
 | 11 | 08-13 | control v5b: sha256 appended to `package/linux/linux.hash` + `package/linux-headers/linux-headers.hash` | **no** — those paths do not exist; the `grep` on a missing file killed the script under `set -e` before `make` ran; the "boot tail" in the monitor was run 10's stale log | invalid (died in preconditions) |
-| 12 | 08-13 | control v5c: hash registered in the **real** files — current Buildroot keeps kernel hashes in versioned subdirs, `linux/before-6.17/linux.hash` and `linux/before-6.17/linux-headers.hash` — and all status written to `/out/c5c-status.txt` on the volume, because the host-side log filter has now swallowed two containers' stdout | hook refs + config + hash entries recorded in the status file pre-build | **running** |
+| 12 | 08-13 | control v5c: hash appended to `linux/before-6.17/{linux,linux-headers}.hash`; status via volume file | preconditions yes, **but the guess about which hash file applies was wrong** | same `No hash found` — those subdirs are not selected for a custom version |
+| 13 | 08-13 | control v5d: read `pkg-generic.mk:502` — hash lookup is `$(PKGDIR)/$(VERSION)/$(RAWNAME).hash`, a subdir named **exactly the version**. Created `linux/6.12.81/linux.hash` + `package/linux-headers/6.12.81/linux-headers.hash`, and gated the build on **`make printvars VARS=LINUX_HEADERS_HASH_FILES`** confirming selection | yes — printvars showed both files selected (plus `board/qemu/patches/…` as a second consulted dir) | hash passed; 6.12.81 downloaded and built; **new failure**: `Incorrect selection of kernel headers: expected 6.18.x, got 6.12.x` |
+| 14 | 08-13 | control v5e: flip declared headers series `BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18` → `_6_12`, `olddefconfig`, resume | series flip verified in `.config` pre-build | **running** |
 
-State of the `brtree` volume after run 12 launch: workaround-patched GCC 15.3.0 installed; `.config`
+State of the `brtree` volume after run 14 launch: workaround-patched GCC 15.3.0 installed; `.config`
 pinned to custom kernel 6.12.81; both hash files carry the 6.12.81 entry; kernel tree is a fresh
 6.12.81 extract (pristine — the 10-site entry.S patch was for 6.18.7 and is **not** applied).
 
