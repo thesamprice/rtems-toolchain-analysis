@@ -3,10 +3,16 @@
 Read [08-microblaze-ira-callee-save.md](08-microblaze-ira-callee-save.md) first for the analysis.
 This is the operational state: what is proven, what is not, what to run next, and what to avoid.
 
-**One-line status:** **ROOT CAUSE FOUND AND VERIFIED** — `entry.S`'s syscall dispatch (site 11,
-`bra r12`) calls every syscall handler with `r1` at the `pt_regs` base, so GCC 15's argument
-spill lands on `PT_R1` and init returns to user space with `AT_FDCWD` as its stack pointer. The
-11-site fix is being boot-tested. GCC-side conclusion unchanged and ready; RTEMS patch stands.
+**One-line status: SOLVED AND INTERVENTION-PROVEN.** Root cause: `entry.S` calls C with `r1` at
+the `pt_regs` base at 11 sites — fatally, the syscall dispatch, where the handler's ABI
+first-argument spill slot **is `PT_R1`**, so every syscall could overwrite the saved user stack
+pointer (init got `AT_FDCWD` as its SP). The 12-edit `entry.S` fix
+([`patches/linux/0001-…-TESTED.patch`](patches/linux/), 13 hunks) boots pristine GCC 15.3 +
+Linux 6.12.81 to a full shell on the exact baseline that hangs stock. Five-run proof chain:
+workaround→shell (14), pristine→hang (16), fault dump names `AT_FDCWD` (17), partial fix moves
+the failure exactly as predicted (18), full fix boots (19). GCC needs no change; the Buildroot
+workaround masks a kernel ABI violation. Remaining: package for LKML, comment on PR 121432,
+and the RTEMS/GCC deliverables already queued.
 
 ---
 
@@ -219,7 +225,7 @@ the outcome**; an outcome without one is not evidence.
 | 16 | 08-13 | control v6b: stray patch removed, dirclean + rebuild + gates + boot | **all gates green**: leftover patches none, hook refs after re-extract **0**, cc1 mtime changed, BUILD_RC=0, banner = pristine 15.3.0 | **NO SHELL — hang after `Run /init`. Genuine failing baseline established.** With run 14 this is a validated A/B on identical 6.12.81 kernels: workaround → shell, pristine → hang. **PR 121432 reproduced; GCC 15.3 still carries it** (15.2-pinning contingency moot) |
 | 17 | 08-13 | fault dump on the failing baseline | gates green | **THE DUMP FIRED AND NAMED THE ROOT CAUSE**: `BADFAULT: pid=1 comm=init addr=0000003c`, `r1=FFFFFF9C` = **-100 = AT_FDCWD**, PC in user text, `esr=0x1012` (data TLB miss, delay slot), `SEGV_MAPERR`. Init was returned to user space with a syscall argument as its stack pointer. See "Root cause" below |
 | 18 | 08-13 | fix test: 11-site patch on the failing baseline | gates green (26 refs, pristine compiler) | **no shell, and no `BADFAULT`** — the AT_FDCWD signature is gone (dispatch fix works) but init dies in the **signal path**: `rPC=BF98C968` is a *stack* address, i.e. the sigreturn trampoline. Diagnosis: `sys_rt_sigreturn_wrapper` (`entry.S:519`) computes the regs pointer as `addik r5, r1, 0`, assuming `r1` == `pt_regs` — **my dispatch fix broke that assumption** by lowering `r1` first, so sigreturn restored context from `pt_regs-32`. A bug in the fix, not a 12th kernel site |
-| 19 | 08-13 | wrapper corrected to `addik r5, r1, C_ARG_SIZE` (with comment); gate updated to 28 refs — first launch had a stale gate of 27 (the comment line also matches `grep -c`), caught before the build wasted | scripted pre-boot | **running** |
+| 19 | 08-13 | wrapper corrected to `addik r5, r1, C_ARG_SIZE`; gate 28 refs | all gates green, pristine compiler confirmed | **SHELL. FIX CONFIRMED.** Full userspace — DHCP lease, crond, `buildroot login:` — and **zero `BADFAULT` prints the entire boot**. Same compiler that hangs the stock kernel |
 
 State of the `brtree` volume after run 17 launch: workaround-patched GCC 15.3.0 installed; `.config`
 pinned to custom kernel 6.12.81; both hash files carry the 6.12.81 entry; kernel tree is a fresh
