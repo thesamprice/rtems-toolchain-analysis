@@ -200,9 +200,31 @@ The middle row is the trap: a restore placed after the delay slot there is never
 the first draft of this patch had exactly that bug. Each of the three shapes was reproduced
 bare-metal under QEMU before the patch was written.
 
-**The patch has never been compiled in a kernel tree.** It applies, and its instructions
-assemble, but there is no `microblazeel-linux-gnu` toolchain here. It is a reviewed design with
-its mechanism proven, not a tested fix.
+**It has now been built and booted, and it is not sufficient.**
+
+Buildroot, GCC 15, Linux 6.18.7, `qemu_microblazeel_mmu_defconfig`, with Buildroot's workaround
+patch removed:
+
+| | console |
+|---|---|
+| unpatched | silent hang after `Run /init as init process` |
+| entry.S patched | `Kernel panic - not syncing: Attempted to kill init! exitcode=0x0000000b` |
+
+`0x0b` is SIGSEGV. The patch demonstrably changes behaviour -- init now starts and faults rather
+than hanging -- so the mechanism is real. It is not a fix.
+
+A second audit pass found three call sites the first one missed, because they use `rted` rather
+than `bralid`/`brlid`/`rtbd`: `full_exception` and two `do_page_fault` calls. `do_page_fault`
+runs on every demand-paging fault, so it looked like the obvious cause of a segfaulting init.
+Adding all three changed nothing: the panic is identical before and after.
+
+This is exactly where Gopi Kumar Bulusu arrived in comment #25 after his own entry.S and irq.c
+attempt -- the same panic, the same exit code -- and his reading still stands: there are further
+sites outside entry.S. Ten call sites there are now covered and it is still not enough, so either
+the remaining sites are in other files, or the argument save area is not the whole story.
+
+**Do not treat this patch as a fix.** It is a measured, reproducible step that narrows the
+problem.
 
 It is not a one-liner: comment #25 found `do_notify_resume` affected too, and comment #45 shows
 the current attempt causing an illegal-opcode exception in kernel mode. Every assembly site that
