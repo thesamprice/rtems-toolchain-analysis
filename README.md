@@ -16,6 +16,7 @@ work needed to do the equivalent in LLVM/Clang.
 | [07](07-reaching-gcc-parity.md) | **Reaching parity with GCC** — the last eight failures, and why six of them were not compiler bugs |
 | [08](08-microblaze-ira-callee-save.md) | **The MicroBlaze "GCC 15 regression"** — why it is an ABI violation in Linux rather than a compiler bug, in a four-line reproducer that fails on GCC 12 |
 | [09](09-microblaze-handoff.md) | **Handoff: MicroBlaze GCC 15 / PR 121432** — what is proven, what is not, the working reproduction harness, and the traps |
+| [10](10-anatomy-of-a-phantom-compiler-bug.md) | **Anatomy of a phantom compiler bug** — the blog post: how the "GCC 15 regression" became a booted kernel fix, wrong turns included |
 | [BUGS.md](BUGS.md) | **Every bug found — fixed, worked around, and still open** |
 | [`patches/`](patches/) | The fixes: three LLVM/lld, eleven RTEMS, two rtems-tools, one QEMU |
 | [`repro/`](repro/) | The `config.ini` carrying the remaining workarounds |
