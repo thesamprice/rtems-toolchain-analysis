@@ -184,7 +184,25 @@ GCC 12.4.1 already in the RTEMS toolchain.
 ## 7. The real fix
 
 `arch/microblaze/kernel/entry.S` must reserve the argument save area before calling C. That is a
-Linux patch, not a GCC one.
+Linux patch, not a GCC one:
+[`patches/linux/0001-microblaze-reserve-the-ABI-argument-save-area.patch`](patches/linux/).
+
+Seven call sites pass arguments while r1 is the pt_regs base, and two return conventions are in
+use which need different treatment:
+
+| convention | sites | restore goes |
+|---|---|---|
+| `r15` is the branch itself | `do_IRQ` | after the delay slot |
+| `r15` is `label - 8` | `_unaligned_data_exception` | through a trampoline -- `ret_from_exc` is reached from three other sites which make no adjustment |
+| two callers converge | `microblaze_kgdb_break`, `sw_exception` | once, at `dbtrap_call+8` |
+
+The middle row is the trap: a restore placed after the delay slot there is never executed, and
+the first draft of this patch had exactly that bug. Each of the three shapes was reproduced
+bare-metal under QEMU before the patch was written.
+
+**The patch has never been compiled in a kernel tree.** It applies, and its instructions
+assemble, but there is no `microblazeel-linux-gnu` toolchain here. It is a reviewed design with
+its mechanism proven, not a tested fix.
 
 It is not a one-liner: comment #25 found `do_notify_resume` affected too, and comment #45 shows
 the current attempt causing an illegal-opcode exception in kernel mode. Every assembly site that

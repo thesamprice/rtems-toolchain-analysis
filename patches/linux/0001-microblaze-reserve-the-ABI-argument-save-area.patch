@@ -1,0 +1,212 @@
+From: Sam Price <thesamprice@gmail.com>
+Subject: [PATCH] microblaze: reserve the ABI argument save area before calling C
+
+The MicroBlaze ABI has the caller reserve stack space for the arguments it
+passes in registers, and permits the callee to spill its incoming argument
+registers there.  GCC states this in the backend: REG_PARM_STACK_SPACE is
+MAX_ARGS_IN_REGISTERS * UNITS_PER_WORD and FIRST_PARM_OFFSET is
+UNITS_PER_WORD, so a callee may write to [caller_sp + 4, caller_sp + 28).
+
+entry.S calls into C with r1 pointing at the pt_regs it has just built, so
+that area is pt_regs itself.  A callee which spills its first argument
+lands on PT_R1, the saved stack pointer:
+
+  do_IRQ:
+	addik	r1, r1, -32
+	swi	r5, r1, 36	<-- caller_sp + 4, i.e. pt_regs + 4 = PT_R1
+
+Nothing changed in the compiler's entitlement to emit that store.  Before
+GCC 15 the register allocator happened to prefer a callee-saved register
+here, so the kernel got away with it; r15-1619-g3b9b8d6cfdf593 scaled
+callee-save costs by block frequency, which made spilling cheaper, and the
+kernel started corrupting its own pt_regs.  Reported as a GCC regression in
+PR 121432.
+
+Reserve the area across each call from entry.S that passes arguments, and
+release it on return.  Calls which pass none -- schedule(),
+preempt_schedule_irq() -- cannot spill an incoming argument and are left
+alone.
+
+Two return conventions are in use and they need different treatment.  Where
+r15 is the branch instruction itself, as for do_IRQ, the callee returns
+after the delay slot and the restore can sit there.  Where r15 is a label
+minus eight, as for _unaligned_data_exception, the callee returns straight
+to ret_from_exc, which is reached from three other sites that make no stack
+adjustment; that one returns through a trampoline instead.  For the debug
+trap both microblaze_kgdb_break and sw_exception converge on dbtrap_call+8,
+so one restore there covers both.
+
+NOT TESTED AGAINST A KERNEL BUILD.  See the notes below the --- line.
+
+Signed-off-by: Sam Price <thesamprice@gmail.com>
+Assisted-by: Claude (Anthropic)
+---
+
+What has been checked:
+
+  * The patch applies to torvalds/linux master with patch(1).
+  * All 23 changed instructions assemble with a microblaze assembler.
+  * The trampoline resolves correctly: addik r15, r0, 9f-8 assembles to
+    0x14 with the 9: label at 0x1c, so rtsd r15, 8 lands on the restore.
+  * The three call/return shapes -- r15-is-the-branch, r15-is-label-minus-8,
+    and the dbtrap_call convergence -- were each reproduced bare-metal under
+    qemu-system-microblaze with a sentinel at PT_R1, corrupted before the
+    change and intact after.
+
+What has not:
+
+  * It has never been compiled inside a kernel tree.  There is no
+    microblazeel-linux-gnu toolchain on the machine this was written on, so
+    the PT_R0 + C_ARG_SIZE expressions and any macro interactions are
+    unverified.
+  * No kernel has been booted with it.
+  * Stack usage grows by 32 bytes per nesting level.
+
+--- a/arch/microblaze/kernel/entry.S
++++ b/arch/microblaze/kernel/entry.S
+@@ -45,6 +45,16 @@
+ #endif /* DEBUG */
+ 
+ #define C_ENTRY(name)	.globl name; .align 4; name
++
++/*
++ * The MicroBlaze ABI has the caller reserve stack space for the arguments
++ * it passes in registers, and lets the callee spill them there: a callee
++ * may write to [caller_sp + 4, caller_sp + 4 + MAX_ARGS_IN_REGISTERS * 4).
++ * We call C with r1 pointing at pt_regs, so that area would be pt_regs
++ * itself.  Lower r1 across such calls.  Link word + 6 argument words,
++ * rounded up for stack alignment.
++ */
++#define C_ARG_SIZE	32
+ 
+ /*
+  * Various ways of setting and clearing BIP in flags reg.
+@@ -381,8 +391,10 @@
+ 
+ 	addik	r3, r0, -ENOSYS
+ 	swi	r3, r1, PT_R3
++	addik	r1, r1, -C_ARG_SIZE
+ 	brlid	r15, do_syscall_trace_enter
+-	addik	r5, r1, PT_R0
++	addik	r5, r1, PT_R0 + C_ARG_SIZE
++	addik	r1, r1, C_ARG_SIZE
+ 
+ 	# do_syscall_trace_enter returns the new syscall nr.
+ 	addk	r12, r0, r3
+@@ -446,8 +458,10 @@
+ 	andi	r11, r11, _TIF_WORK_SYSCALL_MASK
+ 	beqi	r11, 1f
+ 
++	addik	r1, r1, -C_ARG_SIZE
+ 	brlid	r15, do_syscall_trace_leave
+-	addik	r5, r1, PT_R0
++	addik	r5, r1, PT_R0 + C_ARG_SIZE
++	addik	r1, r1, C_ARG_SIZE
+ 1:
+ 	/* We're returning to user mode, so check for various conditions that
+ 	 * trigger rescheduling. */
+@@ -467,8 +481,10 @@
+ 	beqi	r11, 4f;		/* Signals to handle, handle them */
+ 
+ 	addik	r5, r1, 0;		/* Arg 1: struct pt_regs *regs */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, do_notify_resume;	/* Handle any signals */
+ 	add	r6, r30, r0;		/* Arg 2: int in_syscall */
++	addik	r1, r1, C_ARG_SIZE
+ 	add	r30, r0, r0		/* no more restarts */
+ 	bri	1b
+ 
+@@ -569,11 +585,20 @@
+ 	swi	r17, r1, PT_PC;
+ 	tovirt(r1,r1)
+ 	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
+-	addik	r15, r0, ret_from_exc-8
++	/*
++	 * Return through a trampoline rather than straight to
++	 * ret_from_exc: the stack adjustment has to be undone, and
++	 * ret_from_exc is reached from three other sites which do not
++	 * make it.
++	 */
++	addik	r15, r0, 9f-8
+ 	mfs	r3, resr		/* ESR */
+ 	mfs	r4, rear		/* EAR */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rtbd	r0, _unaligned_data_exception
+-	addik	r7, r1, 0		/* parameter struct pt_regs * regs */
++	addik	r7, r1, C_ARG_SIZE	/* parameter struct pt_regs * regs */
++9:addik	r1, r1, C_ARG_SIZE
++	bri	ret_from_exc
+ 
+ /*
+  * Page fault traps.
+@@ -652,8 +677,10 @@
+ 	 * the normal entry sequence, so that it may be safely restored
+ 	 * (in a possibly modified form) after do_notify_resume returns. */
+ 	addik	r5, r1, 0;		/* Arg 1: struct pt_regs *regs */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, do_notify_resume;	/* Handle any signals */
+ 	addi	r6, r0, 0;		/* Arg 2: int in_syscall */
++	addik	r1, r1, C_ARG_SIZE
+ 	bri	1b
+ 
+ /* Finally, return to user state.  */
+@@ -728,9 +755,11 @@
+ 2:
+ 	lwi	CURRENT_TASK, r0, TOPHYS(PER_CPU(CURRENT_SAVE));
+ 	tovirt(r1,r1)
++	addik	r1, r1, -C_ARG_SIZE
+ 	addik	r15, r0, irq_call;
+ irq_call:rtbd	r0, do_IRQ;
+-	addik	r5, r1, 0;
++	addik	r5, r1, C_ARG_SIZE;
++	addik	r1, r1, C_ARG_SIZE
+ 
+ /* MS: we are in virtual mode */
+ ret_from_irq:
+@@ -751,8 +780,10 @@
+ 	beqid	r11, no_intr_resched
+ /* Handle a signal return; Pending signals should be in r18. */
+ 	addik	r5, r1, 0; /* Arg 1: struct pt_regs *regs */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, do_notify_resume;	/* Handle any signals */
+ 	addi	r6, r0, 0; /* Arg 2: int in_syscall */
++	addik	r1, r1, C_ARG_SIZE
+ 	bri	1b
+ 
+ /* Finally, return to user state. */
+@@ -986,6 +1017,7 @@
+ #ifdef CONFIG_KGDB
+ 	addi	r5, r1, 0 /* pass pt_reg address as the first arg */
+ 	addik	r15, r0, dbtrap_call; /* return address */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rtbd	r0, microblaze_kgdb_break
+ 	nop;
+ #endif
+@@ -1011,9 +1043,16 @@
+ 	set_vms;
+ 	addik	r5, r1, 0;
+ 	addik	r15, r0, dbtrap_call;
++	addik	r1, r1, -C_ARG_SIZE
+ dbtrap_call: /* Return point for kernel/user entry + 8 because of rtsd r15, 8 */
+ 	rtbd	r0, sw_exception
+ 	nop
++	/*
++	 * dbtrap_call+8: both microblaze_kgdb_break and sw_exception
++	 * return here, and both were entered with the argument save
++	 * area reserved.
++	 */
++	addik	r1, r1, C_ARG_SIZE
+ 
+ 	/* MS: The first instruction for the second part of the gdb/kgdb */
+ 	set_bip; /* Ints masked for state restore */
+@@ -1037,8 +1076,10 @@
+ 	beqi	r11, 4f;		/* Signals to handle, handle them */
+ 
+ 	addik	r5, r1, 0;		/* Arg 1: struct pt_regs *regs */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, do_notify_resume;	/* Handle any signals */
+ 	addi  r6, r0, 0;	/* Arg 2: int in_syscall */
++	addik	r1, r1, C_ARG_SIZE
+ 	bri	1b
+ 
+ /* Finally, return to user state.  */
