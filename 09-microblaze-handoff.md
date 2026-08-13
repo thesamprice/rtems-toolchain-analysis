@@ -4,8 +4,8 @@ Read [08-microblaze-ira-callee-save.md](08-microblaze-ira-callee-save.md) first 
 This is the operational state: what is proven, what is not, what to run next, and what to avoid.
 
 **One-line status:** the GCC-side conclusion is solid and ready to send; the RTEMS bug is real and
-patched; **the Linux harness is now validated on Linux 6.12.81** (positive control reaches a
-shell with the workaround) and the genuine failing baseline is being established.
+patched; **PR 121432 is reproduced with a validated A/B on Linux 6.12.81** — workaround → shell,
+pristine GCC 15.3 → hang — and the fault-dump run against the real failing baseline is in flight.
 
 ---
 
@@ -215,9 +215,10 @@ the outcome**; an outcome without one is not evidence.
 | 13 | 08-13 | control v5d: read `pkg-generic.mk:502` — hash lookup is `$(PKGDIR)/$(VERSION)/$(RAWNAME).hash`, a subdir named **exactly the version**. Created `linux/6.12.81/linux.hash` + `package/linux-headers/6.12.81/linux-headers.hash`, and gated the build on **`make printvars VARS=LINUX_HEADERS_HASH_FILES`** confirming selection | yes — printvars showed both files selected (plus `board/qemu/patches/…` as a second consulted dir) | hash passed; 6.12.81 downloaded and built; **new failure**: `Incorrect selection of kernel headers: expected 6.18.x, got 6.12.x` |
 | 14 | 08-13 | control v5e: flip declared headers series `BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18` → `_6_12`, `olddefconfig`, resume | series flip verified in `.config` pre-build; `Linux version 6.12.81` banner confirmed | **SHELL REACHED** — syslogd, DHCP lease, crond, `buildroot login:`. **Positive control passes; harness is valid.** The 6.18.7 hang was a separate kernel-side issue, exactly comment #45's second problem. |
 | 15 | 08-13 | control v6: remove workaround via `host-gcc-final-dirclean` + rebuild, gate on hook refs = 0 after re-extract | **gate fired**: after a full 25-min rebuild, the re-extracted source still had 3 hook refs. Cause: run 5's `0003-gcc-config-microblaze-fix-ira-for-GCC15.patch` was still in `package/gcc/15.3.0/` — inert while the source stayed extracted, **applied automatically the moment dirclean re-ran the extract step**. The gate correctly refused to boot | invalid baseline prevented; 25 min spent, no bad data produced |
-| 16 | 08-13 | control v6b: `rm package/gcc/1*/*fix-ira*.patch` (recorded in status file), then dirclean + rebuild + same gates + `linux-dirclean` + boot `</dev/null`. Same 15.2-vs-15.3 contingency applies | leftover-patch check + hook-refs gate + cc1 mtime scripted pre-boot | **running** |
+| 16 | 08-13 | control v6b: stray patch removed, dirclean + rebuild + gates + boot | **all gates green**: leftover patches none, hook refs after re-extract **0**, cc1 mtime changed, BUILD_RC=0, banner = pristine 15.3.0 | **NO SHELL — hang after `Run /init`. Genuine failing baseline established.** With run 14 this is a validated A/B on identical 6.12.81 kernels: workaround → shell, pristine → hang. **PR 121432 reproduced; GCC 15.3 still carries it** (15.2-pinning contingency moot) |
+| 17 | 08-13 | fault dump on the failing baseline: `fault-6.12.c.debug` (regenerated from the 6.12.81 tree, `show_regs` include present) installed over `mm/fault.c`, `linux-rebuild`, boot. Gates: hook refs 0 (baseline compiler untouched), BADFAULT present in tree | scripted pre-boot | **running** — the `r1`-plausibility question finally gets asked against the real bug |
 
-State of the `brtree` volume after run 16 launch: workaround-patched GCC 15.3.0 installed; `.config`
+State of the `brtree` volume after run 17 launch: workaround-patched GCC 15.3.0 installed; `.config`
 pinned to custom kernel 6.12.81; both hash files carry the 6.12.81 entry; kernel tree is a fresh
 6.12.81 extract (pristine — the 10-site entry.S patch was for 6.18.7 and is **not** applied).
 
