@@ -4,7 +4,8 @@ Read [08-microblaze-ira-callee-save.md](08-microblaze-ira-callee-save.md) first 
 This is the operational state: what is proven, what is not, what to run next, and what to avoid.
 
 **One-line status:** the GCC-side conclusion is solid and ready to send; the RTEMS bug is real and
-patched; the Linux failure is **unresolved and the local reproduction is invalid**.
+patched; **the Linux harness is now validated on Linux 6.12.81** (positive control reaches a
+shell with the workaround) and the genuine failing baseline is being established.
 
 ---
 
@@ -79,7 +80,10 @@ BSP is installed locally, so it is validated by a QEMU model of the frame, not b
 
 ## 2. What is NOT established
 
-**The local Linux reproduction is not PR 121432.** This is the important negative result.
+**Update (run 14): the harness is now VALID on Linux 6.12.81** — workaround compiler + stock
+kernel reaches a shell, matching comment #45. The paragraphs below record the earlier state on
+Linux **6.18.7**, where the workaround changed nothing; that remains true for 6.18.7 and is
+comment #45's second, compiler-independent issue. All 6.18.7-based dynamic conclusions stay void.
 
 | build | outcome |
 |---|---|
@@ -209,9 +213,10 @@ the outcome**; an outcome without one is not evidence.
 | 11 | 08-13 | control v5b: sha256 appended to `package/linux/linux.hash` + `package/linux-headers/linux-headers.hash` | **no** — those paths do not exist; the `grep` on a missing file killed the script under `set -e` before `make` ran; the "boot tail" in the monitor was run 10's stale log | invalid (died in preconditions) |
 | 12 | 08-13 | control v5c: hash appended to `linux/before-6.17/{linux,linux-headers}.hash`; status via volume file | preconditions yes, **but the guess about which hash file applies was wrong** | same `No hash found` — those subdirs are not selected for a custom version |
 | 13 | 08-13 | control v5d: read `pkg-generic.mk:502` — hash lookup is `$(PKGDIR)/$(VERSION)/$(RAWNAME).hash`, a subdir named **exactly the version**. Created `linux/6.12.81/linux.hash` + `package/linux-headers/6.12.81/linux-headers.hash`, and gated the build on **`make printvars VARS=LINUX_HEADERS_HASH_FILES`** confirming selection | yes — printvars showed both files selected (plus `board/qemu/patches/…` as a second consulted dir) | hash passed; 6.12.81 downloaded and built; **new failure**: `Incorrect selection of kernel headers: expected 6.18.x, got 6.12.x` |
-| 14 | 08-13 | control v5e: flip declared headers series `BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18` → `_6_12`, `olddefconfig`, resume | series flip verified in `.config` pre-build | **running** |
+| 14 | 08-13 | control v5e: flip declared headers series `BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18` → `_6_12`, `olddefconfig`, resume | series flip verified in `.config` pre-build; `Linux version 6.12.81` banner confirmed | **SHELL REACHED** — syslogd, DHCP lease, crond, `buildroot login:`. **Positive control passes; harness is valid.** The 6.18.7 hang was a separate kernel-side issue, exactly comment #45's second problem. |
+| 15 | 08-13 | control v6: remove workaround (`host-gcc-final-dirclean` re-extracts pristine source), rebuild GCC, `linux-dirclean`, rebuild, boot. Gates: hook refs must be **0** after re-extract, cc1 mtime must change. QEMU now gets `</dev/null` (see new trap). Verdict contingency: bug report used GCC **15.2.0**, this tree builds **15.3.0** — if unpatched 15.3 boots, the difference may be 15.2-specific and the next step is pinning 15.2 | gates scripted pre-boot | **running** |
 
-State of the `brtree` volume after run 14 launch: workaround-patched GCC 15.3.0 installed; `.config`
+State of the `brtree` volume after run 15 launch: workaround-patched GCC 15.3.0 installed; `.config`
 pinned to custom kernel 6.12.81; both hash files carry the 6.12.81 entry; kernel tree is a fresh
 6.12.81 extract (pristine — the 10-site entry.S patch was for 6.18.7 and is **not** applied).
 
@@ -232,6 +237,7 @@ until the **artefact** — not the source, not the makefile — is confirmed to 
 | trap | what happened |
 |---|---|
 | custom kernel versions need a registered hash | Buildroot hard-fails any tarball not listed in the package hash file, and the custom version propagates to `linux-headers` too. The hash files are **not** at `package/linux/` — current master keeps them in versioned subdirs: `linux/before-6.17/linux.hash`, `linux/from-6.17/linux.hash`, and matching `linux-headers.hash`. Get the sha256 from `https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc`. |
+| `qemu -nographic` eats the calling heredoc | with stdin inherited, QEMU consumes the rest of the `sudo bash <<EOS` heredoc and echoes it into the guest serial console. Symptoms: script lines interleaved in boot logs, and the script silently ending at the QEMU invocation (truncated status files, exit 0 with missing verdict blocks). This corrupted three runs before being identified. **Always `< /dev/null` QEMU in scripts.** |
 | container stdout is unreliable here | a host-side log filter reduced two containers' entire output to an empty summary. **Write all status to a file on the mounted volume** and read that; never diagnose from `docker logs`. |
 | `patch --forward` silently skips | a file already carrying an earlier revision of the same change gets skipped; the rebuild produced a kernel without the new hunks, and the boot looked like "the extra sites made no difference". **Copy the whole patched file instead.** |
 | editing a script a container is reading | bind mounts are live and bash reads incrementally; a mid-run edit produced a syntax error at whatever line the shell reached, exit 2, and left a stale log that looked like a result. **Copy the script to a frozen path before launching.** |
