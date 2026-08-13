@@ -223,8 +223,28 @@ attempt -- the same panic, the same exit code -- and his reading still stands: t
 sites outside entry.S. Ten call sites there are now covered and it is still not enough, so either
 the remaining sites are in other files, or the argument save area is not the whole story.
 
-**Do not treat this patch as a fix.** It is a measured, reproducible step that narrows the
-problem.
+**The argument save area is not what kills init.** Rebuilding with `-O0 -fno-inline` on every C
+function `entry.S` calls -- `do_IRQ`, `full_exception`, `do_notify_resume`, `do_page_fault`,
+`ptrace` -- forces the spill deterministically, with no register allocation luck anywhere. With
+the ten-site patch applied on top, the panic is byte for byte identical. Had the spill still been
+the cause, that had to change something. It did not.
+
+So the ABI analysis in sections 2 to 4 is correct about GCC and correct that the kernel's frames
+overlap the callee's spill slots -- that is proven bare-metal and by REG_PARM_STACK_SPACE -- but
+it does not explain this boot failure. "The patch changes the failure mode" was being read as
+evidence of being on the right track, when it is equally consistent with being wrong.
+
+A QEMU `-d int,guest_errors,unimp` trace of the failing boot adds nothing: 27434 device
+interrupts and 21473 MMU exceptions, and both are normal. MicroBlaze has a software-managed TLB,
+so every TLB miss is an MMU exception; they resolve to `memset`, `try_to_wake_up`, `kick_pool`.
+The repeating interrupt at the tail is at `__udelay.constprop.0`, immediately before
+`panic_try_start` -- the panic path's delay loop being ticked, i.e. after the fact. Two readings
+of that trace were wrong before checking the symbols, in both cases by taking the busiest thing
+in the log for the interesting thing.
+
+**Do not treat this patch as a fix for PR 121432.** It is a real ABI fix -- at `-O0` those frames
+are demonstrably corrupted without it -- for a defect that is not the one causing the reported
+hang.
 
 It is not a one-liner: comment #25 found `do_notify_resume` affected too, and comment #45 shows
 the current attempt causing an illegal-opcode exception in kernel mode. Every assembly site that
