@@ -6,7 +6,7 @@ This is the operational state: what is proven, what is not, what to run next, an
 **One-line status: SOLVED AND INTERVENTION-PROVEN.** Root cause: `entry.S` calls C with `r1` at
 the `pt_regs` base at 11 sites — fatally, the syscall dispatch, where the handler's ABI
 first-argument spill slot **is `PT_R1`**, so every syscall could overwrite the saved user stack
-pointer (init got `AT_FDCWD` as its SP). The 12-edit `entry.S` fix
+pointer (init got `AT_FDCWD` as its SP). The three-file fix (v2, 15 sites)
 ([`patches/linux/0001-…-TESTED.patch`](patches/linux/), 13 hunks) boots pristine GCC 15.3 +
 Linux 6.12.81 to a full shell on the exact baseline that hangs stock. Five-run proof chain:
 workaround→shell (14), pristine→hang (16), fault dump names `AT_FDCWD` (17), partial fix moves
@@ -226,6 +226,7 @@ the outcome**; an outcome without one is not evidence.
 | 17 | 08-13 | fault dump on the failing baseline | gates green | **THE DUMP FIRED AND NAMED THE ROOT CAUSE**: `BADFAULT: pid=1 comm=init addr=0000003c`, `r1=FFFFFF9C` = **-100 = AT_FDCWD**, PC in user text, `esr=0x1012` (data TLB miss, delay slot), `SEGV_MAPERR`. Init was returned to user space with a syscall argument as its stack pointer. See "Root cause" below |
 | 18 | 08-13 | fix test: 11-site patch on the failing baseline | gates green (26 refs, pristine compiler) | **no shell, and no `BADFAULT`** — the AT_FDCWD signature is gone (dispatch fix works) but init dies in the **signal path**: `rPC=BF98C968` is a *stack* address, i.e. the sigreturn trampoline. Diagnosis: `sys_rt_sigreturn_wrapper` (`entry.S:519`) computes the regs pointer as `addik r5, r1, 0`, assuming `r1` == `pt_regs` — **my dispatch fix broke that assumption** by lowering `r1` first, so sigreturn restored context from `pt_regs-32`. A bug in the fix, not a 12th kernel site |
 | 19 | 08-13 | wrapper corrected to `addik r5, r1, C_ARG_SIZE`; gate 28 refs | all gates green, pristine compiler confirmed | **SHELL. FIX CONFIRMED.** Full userspace — DHCP lease, crond, `buildroot login:` — and **zero `BADFAULT` prints the entire boot**. Same compiler that hangs the stock kernel |
+| 20 | 08-13 | **v2**: full r15-rule audit of every `arch/microblaze/kernel/*.S` found 4 more sites — `schedule_tail` ×2 (latent, fork child's `pt_regs`), `bad_page_fault` from `hw_exception_handler.S` (**live**: stores to `PT_R1`/`PT_R3` in this binary), `machine_early_init` from `head.S` (**live**: spills past the init stack top every boot). All covered; 3 files, gates: 32 refs + per-file checks | all gates green | **SHELL — v2 confirmed.** `mcount.S` ftrace paths flagged (config off); `giveup_fpu`'s `bralid r15,0` noted as pre-existing unrelated breakage |
 
 State of the `brtree` volume after run 17 launch: workaround-patched GCC 15.3.0 installed; `.config`
 pinned to custom kernel 6.12.81; both hash files carry the 6.12.81 entry; kernel tree is a fresh
