@@ -1,0 +1,51 @@
+From 15a411c43f80d917d1e1e954f32bbc38cca4b562 Mon Sep 17 00:00:00 2001
+From: Sam Price <thesamprice@gmail.com>
+Date: Fri, 14 Aug 2026 12:01:26 +0000
+Subject: [PATCH] board/qemu/microblazeel-mmu: fix the qemu command for QEMU >=
+ 11
+
+QEMU 11 no longer installs a qemu-system-microblazeel binary.  The
+MicroBlaze targets were unified: qemu-system-microblaze now runs both
+endiannesses, selected by a machine-level "endianness" property that
+defaults to big.
+
+That breaks the little-endian board twice over.  The command in this
+readme -- which post-image.sh copies into start-qemu.sh and the CI
+parses -- names a binary that does not exist, and anyone who falls back
+to the unified binary boots the little-endian image on a big-endian
+machine, which dies immediately:
+
+  qemu: fatal: Microblaze: unaligned PC=90000d1a
+
+The big-endian board is unaffected because its readme already invokes
+qemu-system-microblaze, whose default endianness is big.
+
+Use the unified binary with endianness=little.  Verified with QEMU
+11.0.2: the defconfig image boots to the Buildroot login prompt, and
+the same image dies with the fatal above when the property is omitted.
+
+Note for users of older QEMU: the endianness property only exists in
+unified-target builds; with a QEMU that still ships
+qemu-system-microblazeel, the previous command continues to work.
+
+Reported-by: Neal Frager <neal.frager@amd.com>
+Signed-off-by: Sam Price <thesamprice@gmail.com>
+Assisted-by: Claude (Anthropic)
+---
+ board/qemu/microblazeel-mmu/readme.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/board/qemu/microblazeel-mmu/readme.txt b/board/qemu/microblazeel-mmu/readme.txt
+index 20fa0072..4d1e6606 100644
+--- a/board/qemu/microblazeel-mmu/readme.txt
++++ b/board/qemu/microblazeel-mmu/readme.txt
+@@ -1,5 +1,5 @@
+ Run the emulation with:
+ 
+- qemu-system-microblazeel -M petalogix-s3adsp1800 -kernel output/images/linux.bin -serial stdio # qemu_microblazeel_mmu_defconfig
++ qemu-system-microblaze -M petalogix-s3adsp1800,endianness=little -kernel output/images/linux.bin -serial stdio # qemu_microblazeel_mmu_defconfig
+ 
+ The login prompt will appear in the terminal that started Qemu.
+-- 
+2.39.5
+
