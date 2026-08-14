@@ -1,7 +1,7 @@
-From a1d8c64292c6ce58f71a61f5c314f46af86a28c0 Mon Sep 17 00:00:00 2001
+From c06f2d256486990dacc7a5600326d999f0a428c3 Mon Sep 17 00:00:00 2001
 From: Sam Price <thesamprice@gmail.com>
 Date: Fri, 14 Aug 2026 06:07:34 -0400
-Subject: [PATCH v3] microblaze: reserve the ABI argument save area when
+Subject: [PATCH v4] microblaze: reserve the ABI argument save area when
  calling C from entry.S
 
 The MicroBlaze ABI has the caller reserve stack space for the arguments
@@ -11,7 +11,7 @@ REG_PARM_STACK_SPACE is MAX_ARGS_IN_REGISTERS * UNITS_PER_WORD and
 FIRST_PARM_OFFSET is UNITS_PER_WORD, so a callee may write to
 [caller_sp + 4, caller_sp + 28).
 
-arch/microblaze assembly calls C at fifteen sites with r1 pointing at
+arch/microblaze assembly calls C at eighteen sites with r1 pointing at
 live saved state, so that writable area aliases data the kernel needs
 back.  Fatally, one of those sites is entry.S's syscall dispatch:
 
@@ -89,28 +89,30 @@ Signed-off-by: Sam Price <thesamprice@gmail.com>
 Assisted-by: Claude (Anthropic)
 ---
 
-v2 -> v3: no code change.  v2's diff was generated from a scratch tree
-whose base commit only contained entry.S, so hw_exception_handler.S and
-head.S came out as file creations and the patch refused to apply to a
-real tree.  Regenerated from a base carrying all three pristine v6.12.81
-files; every hunk is now a modification.  Verified by git am onto a tree
-that already contains the files.
+v3 -> v4: a line-by-line review found v3 missing three sites that the
+audit had identified but a stale intermediate diff silently dropped
+during the port between kernel trees: full_exception and both
+do_page_fault calls (the rted sites).  All three are now covered; the
+site count in the commit message is corrected to eighteen.  Boot-tested
+again on the pristine-GCC-15 baseline -- and this boot exercises the
+do_page_fault trampolines on every demand-paging fault, so the restored
+sites are validated dynamically, not just present.  A label-binding
+audit (every local Nf/Nb reference, pristine vs patched, all three
+files) shows the five new trampoline labels bind to their own restores
+and no pre-existing reference changed its target.
 
-v1 -> v2 (unchanged from the v2 mail): the r15-rule audit found four
-more sites -- bad_page_fault from the unaligned-fixup path (live:
-stores to PT_R1/PT_R3), machine_early_init from head.S (live: spills
-past the init stack top), and the two latent schedule_tail calls --
-all covered, boot-tested to a shell on pristine GCC 15.3.0.
+v2 -> v3: regenerated as modifications rather than file creations.
+v1 -> v2: the r15-rule audit added the sites beyond entry.S.
 
 Evidence: https://github.com/thesamprice/rtems-toolchain-analysis/pull/1
 
- arch/microblaze/kernel/entry.S                | 76 +++++++++++++++++--
+ arch/microblaze/kernel/entry.S                | 97 ++++++++++++++++---
  arch/microblaze/kernel/head.S                 |  7 +-
  arch/microblaze/kernel/hw_exception_handler.S | 12 ++-
- 3 files changed, 84 insertions(+), 11 deletions(-)
+ 3 files changed, 99 insertions(+), 17 deletions(-)
 
 diff --git a/arch/microblaze/kernel/entry.S b/arch/microblaze/kernel/entry.S
-index 582d725..24d9545 100644
+index 582d725..376c9c1 100644
 --- a/arch/microblaze/kernel/entry.S
 +++ b/arch/microblaze/kernel/entry.S
 @@ -46,6 +46,16 @@ syscall_debug_table:
@@ -223,7 +225,25 @@ index 582d725..24d9545 100644
  
  /*
   * HW EXCEPTION rutine start
-@@ -569,11 +604,20 @@ C_ENTRY(unaligned_data_trap):
+@@ -535,12 +570,15 @@ C_ENTRY(full_exception_trap):
+ 	/* FIXME this can be store directly in PT_ESR reg.
+ 	 * I tested it but there is a fault */
+ 	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
+-	addik	r15, r0, ret_from_exc - 8
++	addik	r15, r0, 8f-8
+ 	mfs	r6, resr
+ 	mfs	r7, rfsr;		/* save FSR */
+ 	mts	rfsr, r0;	/* Clear sticky fsr */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rted	r0, full_exception
+-	addik	r5, r1, 0		 /* parameter struct pt_regs * regs */
++	addik	r5, r1, C_ARG_SIZE	 /* parameter struct pt_regs * regs */
++8:	addik	r1, r1, C_ARG_SIZE
++	bri	ret_from_exc
+ 
+ /*
+  * Unaligned data trap.
+@@ -569,11 +607,20 @@ C_ENTRY(unaligned_data_trap):
  	swi	r17, r1, PT_PC;
  	tovirt(r1,r1)
  	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
@@ -246,7 +266,41 @@ index 582d725..24d9545 100644
  
  /*
   * Page fault traps.
-@@ -652,8 +696,10 @@ C_ENTRY(ret_from_exc):
+@@ -599,11 +646,14 @@ C_ENTRY(page_fault_data_trap):
+ 	swi	r17, r1, PT_PC;
+ 	tovirt(r1,r1)
+ 	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
+-	addik	r15, r0, ret_from_exc-8
++	addik	r15, r0, 7f-8
+ 	mfs	r6, rear		/* parameter unsigned long address */
+ 	mfs	r7, resr		/* parameter unsigned long error_code */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rted	r0, do_page_fault
+-	addik	r5, r1, 0		/* parameter struct pt_regs * regs */
++	addik	r5, r1, C_ARG_SIZE	/* parameter struct pt_regs * regs */
++7:	addik	r1, r1, C_ARG_SIZE
++	bri	ret_from_exc
+ 
+ C_ENTRY(page_fault_instr_trap):
+ 	SAVE_STATE		/* Save registers.*/
+@@ -611,11 +661,14 @@ C_ENTRY(page_fault_instr_trap):
+ 	swi	r17, r1, PT_PC;
+ 	tovirt(r1,r1)
+ 	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
+-	addik	r15, r0, ret_from_exc-8
++	addik	r15, r0, 6f-8
+ 	mfs	r6, rear		/* parameter unsigned long address */
+ 	ori	r7, r0, 0		/* parameter unsigned long error_code */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rted	r0, do_page_fault
+-	addik	r5, r1, 0		/* parameter struct pt_regs * regs */
++	addik	r5, r1, C_ARG_SIZE	/* parameter struct pt_regs * regs */
++6:	addik	r1, r1, C_ARG_SIZE
++	bri	ret_from_exc
+ 
+ /* Entry point used to return from an exception.  */
+ C_ENTRY(ret_from_exc):
+@@ -652,8 +705,10 @@ C_ENTRY(ret_from_exc):
  	 * the normal entry sequence, so that it may be safely restored
  	 * (in a possibly modified form) after do_notify_resume returns. */
  	addik	r5, r1, 0;		/* Arg 1: struct pt_regs *regs */
@@ -257,7 +311,7 @@ index 582d725..24d9545 100644
  	bri	1b
  
  /* Finally, return to user state.  */
-@@ -728,9 +774,11 @@ C_ENTRY(_interrupt):
+@@ -728,9 +783,11 @@ C_ENTRY(_interrupt):
  2:
  	lwi	CURRENT_TASK, r0, TOPHYS(PER_CPU(CURRENT_SAVE));
  	tovirt(r1,r1)
@@ -270,7 +324,7 @@ index 582d725..24d9545 100644
  
  /* MS: we are in virtual mode */
  ret_from_irq:
-@@ -751,8 +799,10 @@ ret_from_irq:
+@@ -751,8 +808,10 @@ ret_from_irq:
  	beqid	r11, no_intr_resched
  /* Handle a signal return; Pending signals should be in r18. */
  	addik	r5, r1, 0; /* Arg 1: struct pt_regs *regs */
@@ -281,7 +335,7 @@ index 582d725..24d9545 100644
  	bri	1b
  
  /* Finally, return to user state. */
-@@ -986,6 +1036,7 @@ C_ENTRY(_debug_exception):
+@@ -986,6 +1045,7 @@ C_ENTRY(_debug_exception):
  #ifdef CONFIG_KGDB
  	addi	r5, r1, 0 /* pass pt_reg address as the first arg */
  	addik	r15, r0, dbtrap_call; /* return address */
@@ -289,7 +343,7 @@ index 582d725..24d9545 100644
  	rtbd	r0, microblaze_kgdb_break
  	nop;
  #endif
-@@ -1011,9 +1062,16 @@ C_ENTRY(_debug_exception):
+@@ -1011,9 +1071,16 @@ C_ENTRY(_debug_exception):
  	set_vms;
  	addik	r5, r1, 0;
  	addik	r15, r0, dbtrap_call;
@@ -306,7 +360,7 @@ index 582d725..24d9545 100644
  
  	/* MS: The first instruction for the second part of the gdb/kgdb */
  	set_bip; /* Ints masked for state restore */
-@@ -1037,8 +1095,10 @@ dbtrap_call: /* Return point for kernel/user entry + 8 because of rtsd r15, 8 */
+@@ -1037,8 +1104,10 @@ dbtrap_call: /* Return point for kernel/user entry + 8 because of rtsd r15, 8 */
  	beqi	r11, 4f;		/* Signals to handle, handle them */
  
  	addik	r5, r1, 0;		/* Arg 1: struct pt_regs *regs */
