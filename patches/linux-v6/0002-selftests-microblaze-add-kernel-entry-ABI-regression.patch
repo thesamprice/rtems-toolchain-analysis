@@ -1,0 +1,185 @@
+From ee9de724abcf37ea97f9385e9159e3a8e2039e60 Mon Sep 17 00:00:00 2001
+From: Sam Price <thesamprice@gmail.com>
+Date: Sat, 15 Aug 2026 19:34:47 -0400
+Subject: [PATCH v6] selftests/microblaze: add kernel-entry ABI regression test
+
+Add a MicroBlaze selftest that asserts the property the entry.S argument
+save-area fix restores: a syscall does not change the user stack pointer.
+
+The MicroBlaze ABI lets a callee spill its incoming argument registers to
+the caller-reserved area at [caller_sp + 4, caller_sp + 28).  When entry.S
+calls a syscall handler with r1 still at the pt_regs base, that spill area
+aliases pt_regs + 4 == PT_R1, the saved user stack pointer, so a handler
+that spills its first argument overwrites the SP userspace resumes with.
+A GCC 15 register-allocation change made such spills common and the bug
+fatal (init died with AT_FDCWD as its stack pointer).
+
+The test issues a raw syscall and reads r1 immediately before and after
+the "brki r14, 8" trap in one asm block, so the compiler cannot interpose
+stack motion; a fixed kernel returns identical values, a regressed kernel
+differs.  It is skipped on non-MicroBlaze builds.
+
+Signed-off-by: Sam Price <thesamprice@gmail.com>
+Co-authored-by: Claude <noreply@anthropic.com>
+---
+ tools/testing/selftests/Makefile              |   1 +
+ tools/testing/selftests/microblaze/.gitignore |   2 +
+ tools/testing/selftests/microblaze/Makefile   |   4 +
+ .../testing/selftests/microblaze/entry_abi.c  | 113 ++++++++++++++++++
+ 4 files changed, 120 insertions(+)
+ create mode 100644 tools/testing/selftests/microblaze/.gitignore
+ create mode 100644 tools/testing/selftests/microblaze/Makefile
+ create mode 100644 tools/testing/selftests/microblaze/entry_abi.c
+
+diff --git a/tools/testing/selftests/Makefile b/tools/testing/selftests/Makefile
+index a9e363b..c8a0f32 100644
+--- a/tools/testing/selftests/Makefile
++++ b/tools/testing/selftests/Makefile
+@@ -55,6 +55,7 @@ TARGETS += lsm
+ TARGETS += membarrier
+ TARGETS += memfd
+ TARGETS += memory-hotplug
++TARGETS += microblaze
+ TARGETS += mincore
+ TARGETS += mount
+ TARGETS += mount_setattr
+diff --git a/tools/testing/selftests/microblaze/.gitignore b/tools/testing/selftests/microblaze/.gitignore
+new file mode 100644
+index 0000000..8efc19a
+--- /dev/null
++++ b/tools/testing/selftests/microblaze/.gitignore
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0-only
++entry_abi
+diff --git a/tools/testing/selftests/microblaze/Makefile b/tools/testing/selftests/microblaze/Makefile
+new file mode 100644
+index 0000000..e35761f
+--- /dev/null
++++ b/tools/testing/selftests/microblaze/Makefile
+@@ -0,0 +1,4 @@
++# SPDX-License-Identifier: GPL-2.0
++TEST_GEN_PROGS := entry_abi
++
++include ../lib.mk
+diff --git a/tools/testing/selftests/microblaze/entry_abi.c b/tools/testing/selftests/microblaze/entry_abi.c
+new file mode 100644
+index 0000000..59f0200
+--- /dev/null
++++ b/tools/testing/selftests/microblaze/entry_abi.c
+@@ -0,0 +1,113 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * MicroBlaze kernel-entry ABI regression test.
++ *
++ * The MicroBlaze ABI has the caller reserve stack space for register
++ * arguments and lets the callee spill its incoming argument registers
++ * there, at [caller_sp + 4, caller_sp + 28).  When arch/microblaze
++ * assembly calls C with r1 still pointing at saved state, that spill area
++ * aliases live data -- and at the syscall dispatch it aliases pt_regs + 4,
++ * i.e. PT_R1, the saved user stack pointer.  A syscall handler that spills
++ * its first argument then silently overwrites the user SP, which the return
++ * path restores; userspace resumes with a corrupted stack pointer.  (This
++ * is how a GCC 15 codegen change turned a latent bug fatal: init died with
++ * AT_FDCWD as its stack pointer.)
++ *
++ * This test asserts the property that must hold: a syscall does not change
++ * the user stack pointer.  It reads r1 immediately before and after the
++ * trap; on a fixed kernel they are identical, on a regressed kernel they
++ * differ (when the process does not simply crash first).
++ */
++#include <stdint.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++#include "../kselftest.h"
++
++#if defined(__microblaze__)
++
++/*
++ * Raw syscall (nr in r12, args in r5.., trap "brki r14, 8", return in r3)
++ * that captures r1 -- the stack pointer -- immediately before and after the
++ * trap in one asm block, so the compiler cannot interpose stack motion.
++ */
++static long sp_checked_syscall(long nr, long a1, long a2, long a3,
++			       unsigned long *sp_before, unsigned long *sp_after)
++{
++	register long r12 __asm__("r12") = nr;
++	register long r5  __asm__("r5")  = a1;
++	register long r6  __asm__("r6")  = a2;
++	register long r7  __asm__("r7")  = a3;
++	register long r3  __asm__("r3");
++	unsigned long before, after;
++
++	__asm__ __volatile__(
++		"addk %0, r1, r0\n\t"
++		"brki r14, 0x8\n\t"
++		"addk %1, r1, r0\n\t"
++		: "=&r"(before), "=&r"(after), "+r"(r3)
++		: "r"(r12), "r"(r5), "r"(r6), "r"(r7)
++		: "r14", "r4", "memory");
++
++	*sp_before = before;
++	*sp_after = after;
++	return r3;
++}
++
++/*
++ * Drive the syscall dispatch many times, each carrying a distinctive first
++ * argument (AT_FDCWD, the value that originally poisoned init's SP), so a
++ * handler that spills its first argument makes a corrupted SP unmistakable.
++ */
++static void test_sp_preserved_across_syscall(void)
++{
++	const long AT_FDCWD = -100;
++	unsigned long before, after;
++	int corrupt = 0;
++	long i;
++
++	for (i = 0; i < 50000; i++) {
++		sp_checked_syscall(__NR_getpid, 0, 0, 0, &before, &after);
++		if (before != after) {
++			corrupt = 1;
++			break;
++		}
++		sp_checked_syscall(__NR_faccessat, AT_FDCWD,
++				   (long)"/nonexistent", 0, &before, &after);
++		if (before != after) {
++			corrupt = 1;
++			break;
++		}
++	}
++
++	if (corrupt)
++		ksft_test_result_fail(
++			"syscall corrupted the user stack pointer: "
++			"0x%lx -> 0x%lx after %ld iterations\n",
++			before, after, i);
++	else
++		ksft_test_result_pass(
++			"user stack pointer preserved across %ld syscalls\n",
++			i * 2);
++}
++
++int main(void)
++{
++	ksft_print_header();
++	ksft_set_plan(1);
++
++	test_sp_preserved_across_syscall();
++
++	ksft_finished();
++}
++
++#else
++
++int main(void)
++{
++	ksft_print_header();
++	ksft_set_plan(1);
++	ksft_test_result_skip("not a MicroBlaze build\n");
++	ksft_finished();
++}
++
++#endif
+-- 
+2.39.5 (Apple Git-154)
+

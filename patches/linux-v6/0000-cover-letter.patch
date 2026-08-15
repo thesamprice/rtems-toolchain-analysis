@@ -1,0 +1,50 @@
+From: Sam Price <thesamprice@gmail.com>
+Subject: [PATCH v6 0/2] microblaze: fix and test the entry.S argument save area
+
+MicroBlaze arch assembly calls C at seventeen sites with r1 pointing at
+live saved state, so the ABI's caller-reserved argument save area --
+[caller_sp + 4, caller_sp + 28), which a callee may spill its incoming
+argument registers into -- aliases data the kernel needs back.  At the
+syscall dispatch it aliases pt_regs + 4 == PT_R1, the saved user stack
+pointer, so a syscall handler that spills its first argument silently
+overwrites the SP userspace resumes with.  A GCC 15 register-allocation
+change made such spills common, turning the latent bug fatal: init dies
+with AT_FDCWD as its stack pointer.
+
+Patch 1 reserves the argument save area (C_ARG_SIZE) around every C call
+on a kernel-entry path.  Patch 2 adds a selftest that asserts the property
+the fix restores -- a syscall does not change the user stack pointer -- so
+the class of bug cannot silently return.
+
+The two are independent: patch 1 is the fix and stands alone; patch 2 is a
+regression test that can be reviewed and applied on its own.
+
+Validation:
+  - patch 1 boots a Buildroot glibc userland (GCC 15.3, Linux 6.12.81) to
+    a shell on the exact configuration that hangs without it, on QEMU and
+    on hardware.
+  - the reverse also holds: reverting patch 1 and rebuilding with the same
+    compiler reproduces the original hang at "Run /init".
+  - patch 2 reports "ok 1 user stack pointer preserved across 100000
+    syscalls" on the fixed kernel; on the reverted kernel the system does
+    not reach userspace, so the test cannot pass -- it fails in the
+    strongest possible way.
+
+Changes since v5:
+  - added the selftest (patch 2); renumbered the fix as patch 1.
+  - hardware validation of the fix (v5 was QEMU-only for the boot path).
+
+Sam Price (2):
+  microblaze: reserve the ABI argument save area when calling C from
+    entry.S
+  selftests/microblaze: add kernel-entry ABI regression test
+
+ arch/microblaze/kernel/entry.S                 |  ...
+ tools/testing/selftests/Makefile               |    1 +
+ tools/testing/selftests/microblaze/.gitignore  |    2 +
+ tools/testing/selftests/microblaze/Makefile    |    4 +
+ tools/testing/selftests/microblaze/entry_abi.c |  113 +++++++++++++++++
+ 5 files changed, ...
+
+--
+2.39.5
