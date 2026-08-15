@@ -1,0 +1,82 @@
+DRAFT -- NOT SENT. Prepared for review; do not mail without approval.
+
+Subject: [PATCH] configs/qemu_microblaze*: use the CPU features QEMU provides
+
+QEMU's MicroBlaze CPU model enables the hardware divider, multiplier
+and barrel shifter by default (target/microblaze/cpu.c: use-div,
+use-hw-mul, use-barrel; the petalogix boards override only version and
+endianness), and the kernel's own mmu_defconfig builds for them. The
+qemu_microblaze*_mmu defconfigs do neither: the custom linux.config
+omits CONFIG_XILINX_MICROBLAZE0_USE_DIV (so it defaults to 0), and the
+userland is built with GCC's MicroBlaze defaults -- software multiply,
+software divide, no barrel shifter. Disassembly of the shipped ld.so,
+libc and busybox shows zero mul, idiv or bsll instructions.
+
+The cost is measurable. Profiling a boot to the login prompt with a
+counting TCG plugin (206.8M translation blocks executed, symbolized
+against System.map and the built libraries): the dynamic loader alone
+spends 7.5M block executions in __umodsi3 -- every ELF symbol-hash
+lookup takes a software modulo -- plus soft multiplies, and glibc's
+word-at-a-time string code pays for every shift.
+
+With this change (kernel USE_DIV=1; BR2_TARGET_OPTIMIZATION passing
+-mno-xl-soft-mul -mno-xl-soft-div -mxl-barrel-shift), the same boot
+executes 48.7M non-idle translation blocks instead of 92.6M (-47%):
+__umodsi3 and __mulsi3 disappear from the profile, strcmp drops 78%
+and the dynamic loader's do_lookup_x 74% from the barrel shifter and
+hardware multiply alone. Verified by disassembly of the rebuilt
+binaries (ld.so: 25 mul / 39 idivu / 30 bslli, libc: 249 / 271 / 217).
+
+-mxl-pattern-compare was also tested and emitted no pcmpbf
+instructions with GCC 15, so it is not included.
+
+Note for users updating an existing build tree: BR2_TARGET_OPTIMIZATION
+is baked into the toolchain wrapper when the toolchain is built, so
+this change requires a clean build (or a toolchain rebuild) to take
+effect on the target packages -- a fresh defconfig build gets it
+automatically.
+
+These defconfigs exist to run on QEMU's petalogix machines, which is
+what makes the instruction set knowable; nothing here is claimed for
+other MicroBlaze hardware. Tested on qemu_microblazeel_mmu (boot to
+login, glibc rootfs); the big-endian variant is changed by symmetry.
+
+Signed-off-by: Sam Price <thesamprice@gmail.com>
+Co-authored-by: Claude <noreply@anthropic.com>
+---
+diff --git a/board/qemu/microblazebe-mmu/linux.config b/board/qemu/microblazebe-mmu/linux.config
+index 7bcd3820..b3c85fcf 100644
+--- a/board/qemu/microblazebe-mmu/linux.config
++++ b/board/qemu/microblazebe-mmu/linux.config
+@@ -18,3 +18,4 @@ CONFIG_SERIAL_UARTLITE=y
+ CONFIG_SERIAL_UARTLITE_CONSOLE=y
+ # CONFIG_VGA_CONSOLE is not set
+ CONFIG_TMPFS=y
++CONFIG_XILINX_MICROBLAZE0_USE_DIV=1
+diff --git a/board/qemu/microblazeel-mmu/linux.config b/board/qemu/microblazeel-mmu/linux.config
+index a6228280..6d7fb51c 100644
+--- a/board/qemu/microblazeel-mmu/linux.config
++++ b/board/qemu/microblazeel-mmu/linux.config
+@@ -17,3 +17,4 @@ CONFIG_SERIAL_UARTLITE=y
+ CONFIG_SERIAL_UARTLITE_CONSOLE=y
+ # CONFIG_VGA_CONSOLE is not set
+ CONFIG_TMPFS=y
++CONFIG_XILINX_MICROBLAZE0_USE_DIV=1
+diff --git a/configs/qemu_microblazebe_mmu_defconfig b/configs/qemu_microblazebe_mmu_defconfig
+index cc6871e2..3d890609 100644
+--- a/configs/qemu_microblazebe_mmu_defconfig
++++ b/configs/qemu_microblazebe_mmu_defconfig
+@@ -16,3 +16,4 @@ BR2_TARGET_ROOTFS_INITRAMFS=y
+ # BR2_TARGET_ROOTFS_TAR is not set
+ BR2_PACKAGE_HOST_QEMU=y
+ BR2_PACKAGE_HOST_QEMU_SYSTEM_MODE=y
++BR2_TARGET_OPTIMIZATION="-mno-xl-soft-mul -mno-xl-soft-div -mxl-barrel-shift"
+diff --git a/configs/qemu_microblazeel_mmu_defconfig b/configs/qemu_microblazeel_mmu_defconfig
+index 8945a775..559a9750 100644
+--- a/configs/qemu_microblazeel_mmu_defconfig
++++ b/configs/qemu_microblazeel_mmu_defconfig
+@@ -16,3 +16,4 @@ BR2_TARGET_ROOTFS_INITRAMFS=y
+ # BR2_TARGET_ROOTFS_TAR is not set
+ BR2_PACKAGE_HOST_QEMU=y
+ BR2_PACKAGE_HOST_QEMU_SYSTEM_MODE=y
++BR2_TARGET_OPTIMIZATION="-mno-xl-soft-mul -mno-xl-soft-div -mxl-barrel-shift"
