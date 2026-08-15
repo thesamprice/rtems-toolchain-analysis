@@ -66,9 +66,9 @@ predicted by the symbol profile — inline shift loops emit no helper
 call, so they hid inside the functions that used them. The measurement
 that found them was the round-3 *delta*, not the baseline profile.
 
-## The patch (draft, not sent)
+## The patch (sent to Neal 2026-08-15)
 
-`patches/buildroot/0001-qemu-microblaze-hw-features-DRAFT-NOT-SENT.patch`
+`patches/buildroot/0001-qemu-microblaze-hw-features-SENT-to-neal.patch`
 — four files, EL tested / BE by symmetry:
 
 1. `board/qemu/microblazeel-mmu/linux.config`:
