@@ -1,6 +1,6 @@
 # Buildroot MicroBlaze: the soft-instruction tax, measured and fixed
 
-**Status: patch DRAFT — NOT SENT anywhere, per instruction.** This documents
+**Status: emailed to Neal 2026-08-15** (asking if history justifies the current defaults before a list posting). This documents
 the finding, the measured fix rounds, and the patch outline for review.
 
 ## The finding (from 10-mb-boot-profile.md)

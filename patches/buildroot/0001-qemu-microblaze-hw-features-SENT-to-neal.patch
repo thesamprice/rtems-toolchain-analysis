@@ -1,4 +1,4 @@
-DRAFT -- NOT SENT. Prepared for review; do not mail without approval.
+SENT to neal.frager@amd.com 2026-08-15 (cc thesamprice@gmail.com), asking whether history justifies the defaults before posting to the Buildroot list. Message-Id 20260815020932.39448-1.
 
 Subject: [PATCH] configs/qemu_microblaze*: use the CPU features QEMU provides
 
