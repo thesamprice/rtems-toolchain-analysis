@@ -350,3 +350,24 @@ until the **artefact** — not the source, not the makefile — is confirmed to 
 **And the meta-lesson:** the control experiment — does the known-good workaround fix *this* build —
 was run last instead of first. It would have cost 30 minutes at the start and saved most of what
 followed.
+
+## Update — tst-cancel*/tst-eintr1 root-caused (see 13-microblaze-cancellation-race.md)
+
+Neal's testsuite failures are a **code-layout/timing-sensitive race in the
+MicroBlaze kernel signal-delivery + syscall-restart path**, *not* the entry.S
+patch. `pthread_cancel()` of a thread blocked in a restartable syscall with no
+data transferred (`read()` on an empty pipe) intermittently hangs; slightly
+different timing makes it segfault (Neal's intermittent `tst-eintr1`).
+
+Proof it's a race — six data points, every timing/layout change flips hang↔work,
+all on **stock entry.S**: (1) pristine build A → HANG; (2) identical source
+rebuilt → works; (3) `write()` in glibc handler → works; (4) `pr_info` in kernel
+`do_signal` → works; (5) 6 plain stores in `do_signal` → works; (6) every
+observable working case shows the kernel doing it right (`in_syscall=1`,
+`-ERESTARTSYS`, PC rewound to `brki`, in glibc's cancel-bridge range → cancel
+fires). Same source / two builds / opposite outcomes is the clincher.
+
+The failing case is unobservable in-guest (any probe flips it — observer effect
+bounds the race window to ~6 instructions). Next step for a maintainer-grade fix
+is an external QEMU `-icount` trace of the PC written into the `rt_sigframe`.
+Reply to Neal drafted (`$SP/neal-reply-DRAFT.txt`), **not sent** — Neal + Sam only.
