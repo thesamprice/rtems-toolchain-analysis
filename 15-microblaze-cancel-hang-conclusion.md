@@ -33,6 +33,7 @@ be authored.
 | SP == &siginfo overlap corrupting si_pid in memory | secondary | reserving a 32-byte ABI arg-save area did **not** cure the hang; nested frames land *below* &info so stack spills don't write up into it |
 | Kernel stack overflow / undersized stack | NOT it | bumped THREAD_SHIFT 13→14 (8K→16K) + enabled DEBUG_STACK_USAGE/SCHED_STACK_END_CHECK: **still hangs 2/2 under icount, no canary/overflow warning** |
 | entry.S register save/restore asymmetry / bad frame math | NOT it | full symbolic audit: SAVE/RESTORE offset-symmetric, frame arithmetic balances, every *restore* window is IRQ-masked, MSR[C] preserved via `addik` |
+| Shared per-CPU `ENTRY_SP`/`CURRENT_SAVE` scratch corrupted by nested exception+IRQ | NOT it | hw_exception audit: every `ENTRY_SP` writer masks IRQs for the full live window (EIP for exceptions, IE=0 for IRQ, BIP for syscall); the scratch is consumed inside the masked prologue |
 
 Stack **direction** is correct (grows down; thread_info at base; `-PT_SIZE` on
 entry). Stack **sizes** are consistent (`PT_SIZE=152=sizeof(pt_regs)`,
@@ -56,18 +57,26 @@ entry). Stack **sizes** are consistent (`PT_SIZE=152=sizeof(pt_regs)`,
    built on half-updated `pt_regs` (→ segfault). The nested-IRQ arrival point vs
    the flag re-check is exactly what `-icount` shifts.
 
-3. **signal.c audit, suspicion #1:** `setup_rt_frame`'s `copy_siginfo_to_user`/
-   `__put_user` write the *user* frame with IRQs enabled; a TLB/page-fault on
-   those user addresses (software-managed TLB → frequent) re-enters via
-   `page_fault_data_trap`, and both exception- and interrupt-entry stomp the
-   **shared per-CPU scratch `PER_CPU(ENTRY_SP)`/`CURRENT_SAVE`** (single slots).
-   A timer IRQ nesting in that narrow window corrupts the `pt_regs`/`r6`(siginfo
-   ptr) that become the handler's launch context → wrong `si_pid`. This directly
-   explains the plugin-observed corrupted `si_pid` (it was real, kernel-side — not
-   a pure artifact).
+3. **~~signal.c audit, suspicion #1: shared-scratch `ENTRY_SP` race~~ — REFUTED.**
+   A dedicated `hw_exception_handler.S`+`entry.S` audit disproved this: on
+   MicroBlaze `MSR[EIP]` (exception-in-progress, bit 9) masks interrupts just like
+   `BIP`. `page_fault_data_trap` runs `SAVE_STATE` (which writes `ENTRY_SP`) under
+   `EIP=1`, so a timer IRQ **cannot** nest into the scratch-live window. Proof:
+   copy-to-user page faults are ubiquitous; if EIP didn't mask, every one would
+   race `ENTRY_SP` and the kernel wouldn't boot. `unaligned_data_trap` even does
+   `set_bip; clear_eip; set_ee` in that order — deliberately handing masking from
+   EIP to BIP. `CURRENT_SAVE` only ever holds `current` (idempotent). The
+   lightweight TLB handler uses its own `pt_pool_space`, not the shared slot.
+   So the asm scratch is protected on every path (EIP / IE=0 / BIP). Ruled out.
 
-Both audits, my `ENTRY_SP` spot-check, and the dynamic negatives converge on the
-same place.
+So both audits agree the **assembly layers are clean** — no register save/restore
+asymmetry, no bad frame math, no unmasked shared-scratch window. The surviving
+suspect is purely at the **C level** (mechanism #2 above): the interrupts-enabled
+`do_notify_resume`/`do_signal` loop and `setup_rt_frame`/`handle_restart` logic,
+where a nested timer IRQ (legitimately taken during that window) can re-drive the
+work-pending loop or interact with syscall-restart non-idempotently. The wrong
+`si_pid` the handler observed is therefore produced by the C-level frame/restart
+handling, not by an asm scratch corruption.
 
 ## Divergences from other arches worth fixing regardless (correctness, not the hang)
 
@@ -81,12 +90,16 @@ same place.
 
 ## Next step to pin the exact instruction
 
-Kernel-side, non-perturbing: watch `PER_CPU(ENTRY_SP)`/`CURRENT_SAVE` and the
-`do_notify_resume` loop (`pc`, `r1`, `r30`, `TI_FLAGS` per iteration) under
-`qemu -icount` via a QEMU exec trace / hardware watchpoint correlated with
-`System.map`, catching the iteration where a nested IRQ/fault lands. This is the
-one instrument that can localize it without perturbing the race (no guest
-instructions added).
+The asm scratch is ruled out, so the instrument should target the **C-level
+work-pending loop**. Kernel-side, non-perturbing: under `qemu -icount`, trace the
+`do_notify_resume` loop (entry.S ~451-473) — log `pc`, `r1`, `r30`(in_syscall),
+and `TI_FLAGS` on each `1:`→`5:` iteration, plus entry/exit of `do_signal` /
+`handle_restart` / `setup_rt_frame` — via a QEMU exec trace correlated with
+`System.map`. Catch the iteration where a nested timer IRQ lands and either (a)
+re-drives `do_signal` so `handle_restart` applies `pc -= 4` twice (→ re-enter
+`read()` → hang), or (b) builds/serves a frame on a half-updated `pt_regs`. QEMU
+tracing adds no guest instructions, so it won't flip the race the way the
+userspace plugin did.
 
 ## Artifacts
 
