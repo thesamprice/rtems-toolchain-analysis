@@ -1,0 +1,708 @@
+From: Sam Price <thesamprice@gmail.com>
+To: neal.frager@amd.com
+Cc: thesamprice@gmail.com
+Subject: MicroBlaze entry.S fix: a kselftest + coverage results
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============3830185812169645381=="
+
+--===============3830185812169645381==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Hi Neal,
+
+Quick heads-up on the MicroBlaze entry.S argument-save-area fix (the
+"GCC 15 regression"). I had the bot write and test a kselftest for it, in
+case we want a regression test to go alongside the patch. It's ready if we
+need it -- no pressure to use it. I also had it run code coverage over the
+patched entry.S so we can say the fix is actually exercised, not just
+asserted. Summary below; patches attached.
+
+=== The test (attached: 0002, a standalone kselftest) ===
+
+tools/testing/selftests/microblaze/entry_abi.c. It asserts the one property
+the fix restores: a syscall does not change the user stack pointer. It reads
+r1 immediately before and after the "brki r14, 8" trap in a single asm
+block, so the compiler can't interpose stack motion. Standard kselftest TAP
+output, arch-gated (skips on non-MicroBlaze).
+
+Verified both directions:
+  - fixed kernel: "ok 1 user stack pointer preserved across ... syscalls".
+  - stock entry.S, same GCC 15: the test's own faccessat(AT_FDCWD, ...)
+    syscall corrupts the saved SP -- the fault dump shows r1 = 0xFFFFFF9C,
+    which is AT_FDCWD (-100), i.e. the syscall's first argument written over
+    the stack pointer -- and the process dies on it.
+
+Honest caveat: because this bug corrupts the SP of any process that makes a
+spilling syscall, a reverted kernel can't reach a usable userspace at all
+(init panics), so there's no graceful "not ok" to print -- the failure
+signal is "doesn't boot / no ok emitted", which CI records as a failure.
+That's as strong as a total-boot-failure bug allows.
+
+=== Code coverage of the fix ===
+
+I ran the patched entry.S under a QEMU TCG coverage plugin with one
+userspace stress binary that drives each kernel-entry path, and checked
+that every argument-save-area reserve site the patch adds actually executes.
+
+Result: 14 of 14 reachable reserve sites executed in a single boot.
+
+  covered  do_syscall_trace_enter      (ptrace PTRACE_SYSCALL)
+  covered  syscall dispatch (bra r12)   (every syscall)
+  covered  do_syscall_trace_leave      (ptrace)
+  covered  do_notify_resume  x4         (signals via setitimer)
+  covered  schedule_tail     x2         (fork)
+  covered  full_exception               (privileged mts from user)
+  covered  do_page_fault (data + instr) (demand fault + bad jump)
+  covered  do_IRQ                        (timer)
+  covered  sw_exception                 (brki r16, 0x18 breakpoint)
+
+The 15th site, microblaze_kgdb_break, is inside #ifdef CONFIG_KGDB (off in
+this config), so it's absent from the build -- reported as N/A, not a miss.
+
+Two things the coverage surfaced that reading the diff wouldn't:
+  - five of the sites (the exception/interrupt entry paths) execute in real
+    mode at the physical alias (0x90000000), not the virtual 0xc0000000
+    base -- so a coverage/filter setup has to span both.
+  - per-instruction coverage is required: the reserve "addik r1,r1,-32"
+    sits mid-translation-block, so TB-entry-only coverage never records it.
+
+Net: every save-area reservation the patch adds is exercised by a real
+workload, and the fix boots to a shell on the failing config on both QEMU
+and hardware. (v4 and v5 both boot hardware now -- the earlier garbage
+console was a different incompatible patch in that stack, not the fix.)
+
+The patches attached are a v6 split: 1/2 is the fix (unchanged from v5),
+2/2 is the test, so the test can be reviewed/applied independently. Nothing
+sent to any list yet.
+
+Cheers,
+Sam
+
+--===============3830185812169645381==
+Content-Type: text/x-patch; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+Content-Disposition: attachment;
+ filename="0001-microblaze-reserve-the-ABI-argument-save-area.patch"
+MIME-Version: 1.0
+
+From 03233d2ef8e29cb8370fe30105628de48a26aff3 Mon Sep 17 00:00:00 2001
+From: Sam Price <thesamprice@gmail.com>
+Date: Fri, 14 Aug 2026 06:07:34 -0400
+Subject: [PATCH v6 1/2] microblaze: reserve the ABI argument save area when
+ calling C from entry.S
+
+The MicroBlaze ABI has the caller reserve stack space for the arguments
+it passes in registers, and permits the callee to spill its incoming
+argument registers there.  GCC states this in the backend:
+REG_PARM_STACK_SPACE is MAX_ARGS_IN_REGISTERS * UNITS_PER_WORD and
+FIRST_PARM_OFFSET is UNITS_PER_WORD, so a callee may write to
+[caller_sp + 4, caller_sp + 28).
+
+arch/microblaze assembly calls C at seventeen sites with r1 pointing at
+live saved state, so that writable area aliases data the kernel needs
+back.  Fatally, one of those sites is entry.S's syscall dispatch:
+
+	lwi	r12, r12, sys_call_table
+	addi	r15, r0, ret_from_trap-8
+	bra	r12
+
+Every syscall handler is entered with its first-argument spill slot
+aliasing pt_regs + 4, which asm-offsets.h names PT_R1: the saved user
+stack pointer.
+
+Until GCC 14 this was latent: the register allocator preferred
+callee-saved registers for incoming arguments, so the spill slot went
+unused.  GCC 15 commit 3b9b8d6cfdf5 ("ira: Scale save/restore costs of
+callee save registers with block frequency") made callee-saved registers
+expensive, and handlers now spill their arguments.  A kernel built with
+GCC 15 corrupts PT_R1 on the first syscall whose handler does so:
+init's first *at syscall overwrites the saved user SP with AT_FDCWD
+(-100), and init takes SIGSEGV on its first stack access after syscall
+return:
+
+  pid=3D1 comm=3Dinit addr=3D0000003c code=3D1
+   r1=3DFFFFFF9C ... rPC=3D480293BC  msr=3D000053A2 ear=3D0000003C esr=3D0000=
+1012
+
+(register dump from a show_regs() instrumentation of do_page_fault;
+esr =3D data TLB miss in a delay slot.)
+
+An objdump sweep of a GCC 15 vmlinux found 11239 functions storing
+through r1 into their caller's argument area.  The idiom is ubiquitous
+and correct for C callers, which always reserve the area; only the
+asm-to-C boundaries violate the contract.  Beyond entry.S the audit
+found the same defect live in two more places in this very binary:
+hw_exception_handler.S's unaligned fixup path calls bad_page_fault,
+which stores r6 and r7 at caller_sp+4 and +12 -- PT_R1 and PT_R3 -- and
+head.S calls the six-argument machine_early_init with r1 four bytes
+below the top of the init stack, so its spills of r6, r9 and r10 land
+past the end of the stack on every boot.  ret_from_fork's call to
+schedule_tail(prev) with r1 at the child's pt_regs is the same bug
+waiting on the allocator's mood.
+
+Reserve the area at each call site by lowering r1 by
+C_ARG_SIZE (32: a link word plus six argument words, rounded for stack
+alignment) across the call and restoring it afterwards.  Where the
+return convention is r15 =3D label-8 the callee returns to the label
+directly, so those sites return through a local trampoline that
+restores r1 first.  sys_rt_sigreturn_wrapper derives its pt_regs
+pointer from r1 and is adjusted for the reservation.  head.S instead
+reserves the area once, when it first sets up the init stack.  Calls
+that pass no arguments (schedule, preempt_schedule_irq, mmu_init,
+start_kernel) cannot spill an incoming argument and are unchanged.
+
+This was reported as a GCC 15 regression, and Buildroot carries a GCC
+patch (a TARGET_CALLEE_SAVE_COST hook returning 1) that masks it by
+suppressing the register-allocation behaviour that exposes it.  The
+compiler is behaving within the ABI; that workaround can be dropped
+once this is applied.
+
+Verified on qemu_microblazeel_mmu (petalogix-s3adsp1800) with an A/B on
+identical Linux 6.12.81 trees and gated compiler provenance:
+
+  GCC 15.3.0, stock kernel:      hang after "Run /init as init process"
+  GCC 15.3.0, this patch:        boots to shell, no user faults
+  GCC 15.3.0 + the Buildroot GCC workaround, stock kernel: boots
+
+An intermediate version covering every site except the syscall dispatch
+moved the failure from a hang to SIGSEGV in the signal path, as the
+mechanism predicts.
+
+Kernel stack cost is 32 bytes per asm-to-C call while it is in flight.
+
+Link: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=3D121432
+Reported-by: Thomas Petazzoni <thomas.petazzoni@bootlin.com>
+Cc: stable@vger.kernel.org # all trees built with GCC >=3D 15
+Signed-off-by: Sam Price <thesamprice@gmail.com>
+Assisted-by: Claude (Anthropic)
+---
+
+v4 -> v5: fixes a real regression v4 introduced, found by Sam Price on
+hardware: after the first user-mode unaligned access, userspace produced
+garbage console output.  v4 wrapped the call to
+_unaligned_data_exception as if it were a C function.  It is assembly
+(hw_exception_handler.S), it makes no C calls, it never reads r1 -- and
+it exits with a direct brai ret_from_exc, bypassing the restore
+trampoline, so ret_from_exc rebuilt the register file from pt_regs
+minus the reservation and returned corrupted state to user space.  The
+site is reverted to pristine, with a comment explaining why it must not
+get the C-callee treatment.  The other exception callees were
+re-verified as genuine asmlinkage C (full_exception, sw_exception,
+do_page_fault); those wraps stand.  Site count corrected to seventeen.
+QEMU boots never exercised the unaligned path, which is why 22 runs
+missed it; the failing platform reproduces it immediately and is the
+definitive test.
+
+v3 -> v4: three rted sites restored after a stale-diff omission.
+v2 -> v3: regenerated as modifications rather than file creations.
+v1 -> v2: the r15-rule audit added the sites beyond entry.S.
+
+Evidence: https://github.com/thesamprice/rtems-toolchain-analysis/pull/1
+
+ arch/microblaze/kernel/entry.S                | 93 ++++++++++++++++---
+ arch/microblaze/kernel/head.S                 |  7 +-
+ arch/microblaze/kernel/hw_exception_handler.S | 12 ++-
+ 3 files changed, 97 insertions(+), 15 deletions(-)
+
+diff --git a/arch/microblaze/kernel/entry.S b/arch/microblaze/kernel/entry.S
+index 582d725..32eb958 100644
+--- a/arch/microblaze/kernel/entry.S
++++ b/arch/microblaze/kernel/entry.S
+@@ -46,6 +46,16 @@ syscall_debug_table:
+=20
+ #define C_ENTRY(name)	.globl name; .align 4; name
+=20
++/*
++ * The MicroBlaze ABI has the caller reserve stack space for the arguments
++ * it passes in registers, and lets the callee spill them there: a callee
++ * may write to [caller_sp + 4, caller_sp + 4 + MAX_ARGS_IN_REGISTERS * 4).
++ * We call C with r1 pointing at pt_regs, so that area would be pt_regs
++ * itself.  Lower r1 across such calls.  Link word + 6 argument words,
++ * rounded up for stack alignment.
++ */
++#define C_ARG_SIZE	32
++
+ /*
+  * Various ways of setting and clearing BIP in flags reg.
+  * This is mucky, but necessary using microblaze version that
+@@ -381,8 +391,10 @@ C_ENTRY(_user_exception):
+=20
+ 	addik	r3, r0, -ENOSYS
+ 	swi	r3, r1, PT_R3
++	addik	r1, r1, -C_ARG_SIZE
+ 	brlid	r15, do_syscall_trace_enter
+-	addik	r5, r1, PT_R0
++	addik	r5, r1, PT_R0 + C_ARG_SIZE
++	addik	r1, r1, C_ARG_SIZE
+=20
+ 	# do_syscall_trace_enter returns the new syscall nr.
+ 	addk	r12, r0, r3
+@@ -420,9 +432,19 @@ C_ENTRY(_user_exception):
+=20
+ 	# Find and jump into the syscall handler.
+ 	lwi	r12, r12, sys_call_table
+-	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
+-	addi	r15, r0, ret_from_trap-8
++	/*
++	 * SITE 11, the one every syscall takes: the handler is a C function
++	 * entered with r1 still at the pt_regs base, so its ABI argument
++	 * save area is pt_regs itself -- and its first-argument spill slot
++	 * is pt_regs+4 =3D PT_R1, the saved user stack pointer.  Reserve the
++	 * area across the call and return through a trampoline, since r15
++	 * points at ret_from_trap-8 rather than at this branch.
++	 */
++	addi	r15, r0, 4f-8
++	addik	r1, r1, -C_ARG_SIZE
+ 	bra	r12
++4:	addik	r1, r1, C_ARG_SIZE
++	bri	ret_from_trap
+=20
+ 	/* The syscall number is invalid, return an error.  */
+ 5:
+@@ -446,8 +468,10 @@ C_ENTRY(ret_from_trap):
+ 	andi	r11, r11, _TIF_WORK_SYSCALL_MASK
+ 	beqi	r11, 1f
+=20
++	addik	r1, r1, -C_ARG_SIZE
+ 	brlid	r15, do_syscall_trace_leave
+-	addik	r5, r1, PT_R0
++	addik	r5, r1, PT_R0 + C_ARG_SIZE
++	addik	r1, r1, C_ARG_SIZE
+ 1:
+ 	/* We're returning to user mode, so check for various conditions that
+ 	 * trigger rescheduling. */
+@@ -467,8 +491,10 @@ C_ENTRY(ret_from_trap):
+ 	beqi	r11, 4f;		/* Signals to handle, handle them */
+=20
+ 	addik	r5, r1, 0;		/* Arg 1: struct pt_regs *regs */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, do_notify_resume;	/* Handle any signals */
+ 	add	r6, r30, r0;		/* Arg 2: int in_syscall */
++	addik	r1, r1, C_ARG_SIZE
+ 	add	r30, r0, r0		/* no more restarts */
+ 	bri	1b
+=20
+@@ -501,25 +527,34 @@ TRAP_return:		/* Make global symbol for debugging */
+    (copy_thread makes ret_from_fork the return address in each new thread's
+    saved context).  */
+ C_ENTRY(ret_from_fork):
++	/* schedule_tail takes prev in r5, and r1 is the child's pt_regs. */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, schedule_tail; /* ...which is schedule_tail's arg */
+ 	add	r5, r3, r0;	/* switch_thread returns the prev task */
+ 				/* ( in the delay slot ) */
++	addik	r1, r1, C_ARG_SIZE
+ 	brid	ret_from_trap;	/* Do normal trap return */
+ 	add	r3, r0, r0;	/* Child's fork call should return 0. */
+=20
+ C_ENTRY(ret_from_kernel_thread):
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, schedule_tail; /* ...which is schedule_tail's arg */
+ 	add	r5, r3, r0;	/* switch_thread returns the prev task */
+ 				/* ( in the delay slot ) */
+ 	brald	r15, r20	/* fn was left in r20 */
+ 	addk	r5, r0, r19	/* ... and argument - in r19 */
++	addik	r1, r1, C_ARG_SIZE
+ 	brid	ret_from_trap
+ 	add	r3, r0, r0
+=20
+ C_ENTRY(sys_rt_sigreturn_wrapper):
+ 	addik	r30, r0, 0		/* no restarts */
+ 	brid	sys_rt_sigreturn	/* Do real work */
+-	addik	r5, r1, 0;		/* add user context as 1st arg */
++	/*
++	 * The dispatch lowered r1 by C_ARG_SIZE before branching here, so
++	 * the pt_regs base is that far above the current stack pointer.
++	 */
++	addik	r5, r1, C_ARG_SIZE;	/* add user context as 1st arg */
+=20
+ /*
+  * HW EXCEPTION rutine start
+@@ -535,12 +570,15 @@ C_ENTRY(full_exception_trap):
+ 	/* FIXME this can be store directly in PT_ESR reg.
+ 	 * I tested it but there is a fault */
+ 	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
+-	addik	r15, r0, ret_from_exc - 8
++	addik	r15, r0, 8f-8
+ 	mfs	r6, resr
+ 	mfs	r7, rfsr;		/* save FSR */
+ 	mts	rfsr, r0;	/* Clear sticky fsr */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rted	r0, full_exception
+-	addik	r5, r1, 0		 /* parameter struct pt_regs * regs */
++	addik	r5, r1, C_ARG_SIZE	 /* parameter struct pt_regs * regs */
++8:	addik	r1, r1, C_ARG_SIZE
++	bri	ret_from_exc
+=20
+ /*
+  * Unaligned data trap.
+@@ -569,6 +607,15 @@ C_ENTRY(unaligned_data_trap):
+ 	swi	r17, r1, PT_PC;
+ 	tovirt(r1,r1)
+ 	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
++	/*
++	 * _unaligned_data_exception is assembly (hw_exception_handler.S),
++	 * makes no C calls, never reads r1, and exits with a direct
++	 * brai ret_from_exc -- so it must NOT get the C argument-area
++	 * treatment: a reservation here is never restored on that exit
++	 * and ret_from_exc would rebuild state from pt_regs minus the
++	 * reservation.  Found on hardware as garbage userspace console
++	 * output after the first user unaligned access.
++	 */
+ 	addik	r15, r0, ret_from_exc-8
+ 	mfs	r3, resr		/* ESR */
+ 	mfs	r4, rear		/* EAR */
+@@ -599,11 +646,14 @@ C_ENTRY(page_fault_data_trap):
+ 	swi	r17, r1, PT_PC;
+ 	tovirt(r1,r1)
+ 	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
+-	addik	r15, r0, ret_from_exc-8
++	addik	r15, r0, 7f-8
+ 	mfs	r6, rear		/* parameter unsigned long address */
+ 	mfs	r7, resr		/* parameter unsigned long error_code */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rted	r0, do_page_fault
+-	addik	r5, r1, 0		/* parameter struct pt_regs * regs */
++	addik	r5, r1, C_ARG_SIZE	/* parameter struct pt_regs * regs */
++7:	addik	r1, r1, C_ARG_SIZE
++	bri	ret_from_exc
+=20
+ C_ENTRY(page_fault_instr_trap):
+ 	SAVE_STATE		/* Save registers.*/
+@@ -611,11 +661,14 @@ C_ENTRY(page_fault_instr_trap):
+ 	swi	r17, r1, PT_PC;
+ 	tovirt(r1,r1)
+ 	/* where the trap should return need -8 to adjust for rtsd r15, 8 */
+-	addik	r15, r0, ret_from_exc-8
++	addik	r15, r0, 6f-8
+ 	mfs	r6, rear		/* parameter unsigned long address */
+ 	ori	r7, r0, 0		/* parameter unsigned long error_code */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rted	r0, do_page_fault
+-	addik	r5, r1, 0		/* parameter struct pt_regs * regs */
++	addik	r5, r1, C_ARG_SIZE	/* parameter struct pt_regs * regs */
++6:	addik	r1, r1, C_ARG_SIZE
++	bri	ret_from_exc
+=20
+ /* Entry point used to return from an exception.  */
+ C_ENTRY(ret_from_exc):
+@@ -652,8 +705,10 @@ C_ENTRY(ret_from_exc):
+ 	 * the normal entry sequence, so that it may be safely restored
+ 	 * (in a possibly modified form) after do_notify_resume returns. */
+ 	addik	r5, r1, 0;		/* Arg 1: struct pt_regs *regs */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, do_notify_resume;	/* Handle any signals */
+ 	addi	r6, r0, 0;		/* Arg 2: int in_syscall */
++	addik	r1, r1, C_ARG_SIZE
+ 	bri	1b
+=20
+ /* Finally, return to user state.  */
+@@ -728,9 +783,11 @@ C_ENTRY(_interrupt):
+ 2:
+ 	lwi	CURRENT_TASK, r0, TOPHYS(PER_CPU(CURRENT_SAVE));
+ 	tovirt(r1,r1)
++	addik	r1, r1, -C_ARG_SIZE
+ 	addik	r15, r0, irq_call;
+ irq_call:rtbd	r0, do_IRQ;
+-	addik	r5, r1, 0;
++	addik	r5, r1, C_ARG_SIZE;
++	addik	r1, r1, C_ARG_SIZE
+=20
+ /* MS: we are in virtual mode */
+ ret_from_irq:
+@@ -751,8 +808,10 @@ ret_from_irq:
+ 	beqid	r11, no_intr_resched
+ /* Handle a signal return; Pending signals should be in r18. */
+ 	addik	r5, r1, 0; /* Arg 1: struct pt_regs *regs */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, do_notify_resume;	/* Handle any signals */
+ 	addi	r6, r0, 0; /* Arg 2: int in_syscall */
++	addik	r1, r1, C_ARG_SIZE
+ 	bri	1b
+=20
+ /* Finally, return to user state. */
+@@ -986,6 +1045,7 @@ C_ENTRY(_debug_exception):
+ #ifdef CONFIG_KGDB
+ 	addi	r5, r1, 0 /* pass pt_reg address as the first arg */
+ 	addik	r15, r0, dbtrap_call; /* return address */
++	addik	r1, r1, -C_ARG_SIZE
+ 	rtbd	r0, microblaze_kgdb_break
+ 	nop;
+ #endif
+@@ -1011,9 +1071,16 @@ C_ENTRY(_debug_exception):
+ 	set_vms;
+ 	addik	r5, r1, 0;
+ 	addik	r15, r0, dbtrap_call;
++	addik	r1, r1, -C_ARG_SIZE
+ dbtrap_call: /* Return point for kernel/user entry + 8 because of rtsd r15, =
+8 */
+ 	rtbd	r0, sw_exception
+ 	nop
++	/*
++	 * dbtrap_call+8: both microblaze_kgdb_break and sw_exception
++	 * return here, and both were entered with the argument save
++	 * area reserved.
++	 */
++	addik	r1, r1, C_ARG_SIZE
+=20
+ 	/* MS: The first instruction for the second part of the gdb/kgdb */
+ 	set_bip; /* Ints masked for state restore */
+@@ -1037,8 +1104,10 @@ dbtrap_call: /* Return point for kernel/user entry + 8=
+ because of rtsd r15, 8 */
+ 	beqi	r11, 4f;		/* Signals to handle, handle them */
+=20
+ 	addik	r5, r1, 0;		/* Arg 1: struct pt_regs *regs */
++	addik	r1, r1, -C_ARG_SIZE
+ 	bralid	r15, do_notify_resume;	/* Handle any signals */
+ 	addi  r6, r0, 0;	/* Arg 2: int in_syscall */
++	addik	r1, r1, C_ARG_SIZE
+ 	bri	1b
+=20
+ /* Finally, return to user state.  */
+diff --git a/arch/microblaze/kernel/head.S b/arch/microblaze/kernel/head.S
+index ec2fcb5..865b287 100644
+--- a/arch/microblaze/kernel/head.S
++++ b/arch/microblaze/kernel/head.S
+@@ -329,8 +329,11 @@ start_here:
+ 	addik	r13, r0, _KERNEL_SDA_BASE_
+ 	addik	r2, r0, _KERNEL_SDA2_BASE_
+=20
+-	/* Initialize stack pointer */
+-	addik	r1, r0, init_thread_union + THREAD_SIZE - 4
++	/* Initialize stack pointer.  The extra 32 bytes are the MicroBlaze
++	 * ABI argument save area for the C calls made below: with r1 at the
++	 * very top, machine_early_init (six arguments) spills r6/r9/r10
++	 * past the end of the init stack into whatever follows it. */
++	addik	r1, r0, init_thread_union + THREAD_SIZE - 4 - 32
+=20
+ 	/* Initialize r31 with current task address */
+ 	addik	r31, r0, init_task
+diff --git a/arch/microblaze/kernel/hw_exception_handler.S b/arch/microblaze/=
+kernel/hw_exception_handler.S
+index 07ea239..a13d734 100644
+--- a/arch/microblaze/kernel/hw_exception_handler.S
++++ b/arch/microblaze/kernel/hw_exception_handler.S
+@@ -908,9 +908,19 @@ ex_unaligned_fixup:
+ 	addik	r7, r0, SIGSEGV
+ 	/* call bad_page_fault for finding aligned fixup, fixup address is saved
+ 	 * in PT_PC which is used as return address from exception */
+-	addik	r15, r0, ret_from_exc-8 /* setup return address */
++	/*
++	 * bad_page_fault is C and r1 is the pt_regs base, so its ABI
++	 * argument save area would be pt_regs itself; this binary's
++	 * bad_page_fault spills r6/r7 to caller_sp+4/+12 =3D PT_R1/PT_R3.
++	 * Reserve the area and return through a trampoline, since r15
++	 * points at ret_from_exc-8.
++	 */
++	addik	r15, r0, 3f-8 /* setup return address */
++	addik	r1, r1, -32 /* MicroBlaze ABI argument save area */
+ 	brid	bad_page_fault
+ 	nop
++3:	addik	r1, r1, 32
++	bri	ret_from_exc
+=20
+ /* We prevent all load/store because it could failed any attempt to access */
+ .section __ex_table,"a";
+--=20
+2.39.5 (Apple Git-154)
+
+
+--===============3830185812169645381==
+Content-Type: text/x-patch; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+Content-Disposition: attachment;
+ filename="0002-selftests-microblaze-add-kernel-entry-ABI-regression.patch"
+MIME-Version: 1.0
+
+From ee9de724abcf37ea97f9385e9159e3a8e2039e60 Mon Sep 17 00:00:00 2001
+From: Sam Price <thesamprice@gmail.com>
+Date: Sat, 15 Aug 2026 19:34:47 -0400
+Subject: [PATCH v6] selftests/microblaze: add kernel-entry ABI regression test
+
+Add a MicroBlaze selftest that asserts the property the entry.S argument
+save-area fix restores: a syscall does not change the user stack pointer.
+
+The MicroBlaze ABI lets a callee spill its incoming argument registers to
+the caller-reserved area at [caller_sp + 4, caller_sp + 28).  When entry.S
+calls a syscall handler with r1 still at the pt_regs base, that spill area
+aliases pt_regs + 4 =3D=3D PT_R1, the saved user stack pointer, so a handler
+that spills its first argument overwrites the SP userspace resumes with.
+A GCC 15 register-allocation change made such spills common and the bug
+fatal (init died with AT_FDCWD as its stack pointer).
+
+The test issues a raw syscall and reads r1 immediately before and after
+the "brki r14, 8" trap in one asm block, so the compiler cannot interpose
+stack motion; a fixed kernel returns identical values, a regressed kernel
+differs.  It is skipped on non-MicroBlaze builds.
+
+Signed-off-by: Sam Price <thesamprice@gmail.com>
+Co-authored-by: Claude <noreply@anthropic.com>
+---
+ tools/testing/selftests/Makefile              |   1 +
+ tools/testing/selftests/microblaze/.gitignore |   2 +
+ tools/testing/selftests/microblaze/Makefile   |   4 +
+ .../testing/selftests/microblaze/entry_abi.c  | 113 ++++++++++++++++++
+ 4 files changed, 120 insertions(+)
+ create mode 100644 tools/testing/selftests/microblaze/.gitignore
+ create mode 100644 tools/testing/selftests/microblaze/Makefile
+ create mode 100644 tools/testing/selftests/microblaze/entry_abi.c
+
+diff --git a/tools/testing/selftests/Makefile b/tools/testing/selftests/Makef=
+ile
+index a9e363b..c8a0f32 100644
+--- a/tools/testing/selftests/Makefile
++++ b/tools/testing/selftests/Makefile
+@@ -55,6 +55,7 @@ TARGETS +=3D lsm
+ TARGETS +=3D membarrier
+ TARGETS +=3D memfd
+ TARGETS +=3D memory-hotplug
++TARGETS +=3D microblaze
+ TARGETS +=3D mincore
+ TARGETS +=3D mount
+ TARGETS +=3D mount_setattr
+diff --git a/tools/testing/selftests/microblaze/.gitignore b/tools/testing/se=
+lftests/microblaze/.gitignore
+new file mode 100644
+index 0000000..8efc19a
+--- /dev/null
++++ b/tools/testing/selftests/microblaze/.gitignore
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0-only
++entry_abi
+diff --git a/tools/testing/selftests/microblaze/Makefile b/tools/testing/self=
+tests/microblaze/Makefile
+new file mode 100644
+index 0000000..e35761f
+--- /dev/null
++++ b/tools/testing/selftests/microblaze/Makefile
+@@ -0,0 +1,4 @@
++# SPDX-License-Identifier: GPL-2.0
++TEST_GEN_PROGS :=3D entry_abi
++
++include ../lib.mk
+diff --git a/tools/testing/selftests/microblaze/entry_abi.c b/tools/testing/s=
+elftests/microblaze/entry_abi.c
+new file mode 100644
+index 0000000..59f0200
+--- /dev/null
++++ b/tools/testing/selftests/microblaze/entry_abi.c
+@@ -0,0 +1,113 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * MicroBlaze kernel-entry ABI regression test.
++ *
++ * The MicroBlaze ABI has the caller reserve stack space for register
++ * arguments and lets the callee spill its incoming argument registers
++ * there, at [caller_sp + 4, caller_sp + 28).  When arch/microblaze
++ * assembly calls C with r1 still pointing at saved state, that spill area
++ * aliases live data -- and at the syscall dispatch it aliases pt_regs + 4,
++ * i.e. PT_R1, the saved user stack pointer.  A syscall handler that spills
++ * its first argument then silently overwrites the user SP, which the return
++ * path restores; userspace resumes with a corrupted stack pointer.  (This
++ * is how a GCC 15 codegen change turned a latent bug fatal: init died with
++ * AT_FDCWD as its stack pointer.)
++ *
++ * This test asserts the property that must hold: a syscall does not change
++ * the user stack pointer.  It reads r1 immediately before and after the
++ * trap; on a fixed kernel they are identical, on a regressed kernel they
++ * differ (when the process does not simply crash first).
++ */
++#include <stdint.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++#include "../kselftest.h"
++
++#if defined(__microblaze__)
++
++/*
++ * Raw syscall (nr in r12, args in r5.., trap "brki r14, 8", return in r3)
++ * that captures r1 -- the stack pointer -- immediately before and after the
++ * trap in one asm block, so the compiler cannot interpose stack motion.
++ */
++static long sp_checked_syscall(long nr, long a1, long a2, long a3,
++			       unsigned long *sp_before, unsigned long *sp_after)
++{
++	register long r12 __asm__("r12") =3D nr;
++	register long r5  __asm__("r5")  =3D a1;
++	register long r6  __asm__("r6")  =3D a2;
++	register long r7  __asm__("r7")  =3D a3;
++	register long r3  __asm__("r3");
++	unsigned long before, after;
++
++	__asm__ __volatile__(
++		"addk %0, r1, r0\n\t"
++		"brki r14, 0x8\n\t"
++		"addk %1, r1, r0\n\t"
++		: "=3D&r"(before), "=3D&r"(after), "+r"(r3)
++		: "r"(r12), "r"(r5), "r"(r6), "r"(r7)
++		: "r14", "r4", "memory");
++
++	*sp_before =3D before;
++	*sp_after =3D after;
++	return r3;
++}
++
++/*
++ * Drive the syscall dispatch many times, each carrying a distinctive first
++ * argument (AT_FDCWD, the value that originally poisoned init's SP), so a
++ * handler that spills its first argument makes a corrupted SP unmistakable.
++ */
++static void test_sp_preserved_across_syscall(void)
++{
++	const long AT_FDCWD =3D -100;
++	unsigned long before, after;
++	int corrupt =3D 0;
++	long i;
++
++	for (i =3D 0; i < 50000; i++) {
++		sp_checked_syscall(__NR_getpid, 0, 0, 0, &before, &after);
++		if (before !=3D after) {
++			corrupt =3D 1;
++			break;
++		}
++		sp_checked_syscall(__NR_faccessat, AT_FDCWD,
++				   (long)"/nonexistent", 0, &before, &after);
++		if (before !=3D after) {
++			corrupt =3D 1;
++			break;
++		}
++	}
++
++	if (corrupt)
++		ksft_test_result_fail(
++			"syscall corrupted the user stack pointer: "
++			"0x%lx -> 0x%lx after %ld iterations\n",
++			before, after, i);
++	else
++		ksft_test_result_pass(
++			"user stack pointer preserved across %ld syscalls\n",
++			i * 2);
++}
++
++int main(void)
++{
++	ksft_print_header();
++	ksft_set_plan(1);
++
++	test_sp_preserved_across_syscall();
++
++	ksft_finished();
++}
++
++#else
++
++int main(void)
++{
++	ksft_print_header();
++	ksft_set_plan(1);
++	ksft_test_result_skip("not a MicroBlaze build\n");
++	ksft_finished();
++}
++
++#endif
+--=20
+2.39.5 (Apple Git-154)
+
+
+--===============3830185812169645381==--
