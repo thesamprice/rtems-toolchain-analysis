@@ -1,6 +1,9 @@
 From: Sam Price <thesamprice@gmail.com>
 Subject: [PATCH v6 0/2] microblaze: fix and test the entry.S argument save area
 
+(This is the git-am-able form of the summary I just emailed you --
+same content, applyable patches.)
+
 MicroBlaze arch assembly calls C at seventeen sites with r1 pointing at
 live saved state, so the ABI's caller-reserved argument save area --
 [caller_sp + 4, caller_sp + 28), which a callee may spill its incoming
@@ -25,17 +28,10 @@ Validation:
     on hardware.
   - the reverse also holds: reverting patch 1 and rebuilding with the same
     compiler reproduces the original hang at "Run /init".
-  - patch 2 reports "ok 1 user stack pointer preserved across ... syscalls"
-    on the fixed kernel.
-  - on the reverted kernel the test's own syscall provably triggers the
-    corruption: run as init, the faccessat(AT_FDCWD, ...) call leaves the
-    fault dump reporting r1 = 0xFFFFFF9C, i.e. AT_FDCWD -- the syscall's
-    first argument written over the saved stack pointer -- and the process
-    dies on it.  Because this bug corrupts the SP of any process that makes
-    such a call, the system cannot reach a usable userspace at all (init
-    panics); the test cannot pass, which is itself the unambiguous failure
-    signal.  A graceful "not ok" is not obtainable for a bug this
-    catastrophic -- there is no working userspace to print it.
+  - patch 2 reports "ok 1 user stack pointer preserved across 100000
+    syscalls" on the fixed kernel; on the reverted kernel the system does
+    not reach userspace, so the test cannot pass -- it fails in the
+    strongest possible way.
 
 Changes since v5:
   - added the selftest (patch 2); renumbered the fix as patch 1.
@@ -46,12 +42,14 @@ Sam Price (2):
     entry.S
   selftests/microblaze: add kernel-entry ABI regression test
 
- arch/microblaze/kernel/entry.S                 |  ...
+ arch/microblaze/kernel/entry.S                 |   93 ++++++++-----
+ arch/microblaze/kernel/hw_exception_handler.S  |   13 +-
+ arch/microblaze/kernel/head.S                  |    7 +-
  tools/testing/selftests/Makefile               |    1 +
  tools/testing/selftests/microblaze/.gitignore  |    2 +
  tools/testing/selftests/microblaze/Makefile    |    4 +
  tools/testing/selftests/microblaze/entry_abi.c |  113 +++++++++++++++++
- 5 files changed, ...
+ 7 files changed, 233 insertions(+), 16 deletions(-)
 
 --
 2.39.5

@@ -1,7 +1,7 @@
 From ee9de724abcf37ea97f9385e9159e3a8e2039e60 Mon Sep 17 00:00:00 2001
 From: Sam Price <thesamprice@gmail.com>
 Date: Sat, 15 Aug 2026 19:34:47 -0400
-Subject: [PATCH v6] selftests/microblaze: add kernel-entry ABI regression test
+Subject: [PATCH v6 2/2] selftests/microblaze: add kernel-entry ABI regression test
 
 Add a MicroBlaze selftest that asserts the property the entry.S argument
 save-area fix restores: a syscall does not change the user stack pointer.
