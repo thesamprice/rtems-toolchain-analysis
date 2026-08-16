@@ -1,0 +1,44 @@
+Site 14 static verification: ex_unaligned_fixup -> bad_page_fault
+vmlinux: the run-20 (v2) build, Linux 6.12.81, pristine GCC 15.3.0
+
+$ nm vmlinux | grep -E " (ex_unaligned_fixup|bad_page_fault|ret_from_exc)$"
+c000667c T bad_page_fault
+c0001624 t ex_unaligned_fixup
+c00057b0 T ret_from_exc
+
+$ objdump -d --start-address=0xc0001624 --stop-address=$((0xc0001624+64)) vmlinux
+c0001624 <ex_sw_end_vm>:
+c0001624:	a0a70000 	ori	r5, r7, 0
+c0001628:	e8c70080 	lwi	r6, r7, 128
+c000162c:	30c6fffc 	addik	r6, r6, -4
+c0001630:	f8c70080 	swi	r6, r7, 128
+c0001634:	30e0000b 	addik	r7, r0, 11
+c0001638:	b000c000 	imm	-16384
+c000163c:	31e01648 	addik	r15, r0, 5704
+c0001640:	3021ffe0 	addik	r1, r1, -32
+c0001644:	b0000000 	imm	0
+c0001648:	b8105034 	brid	20532		// c000667c
+c000164c:	80000000 	or	r0, r0, r0
+c0001650:	30210020 	addik	r1, r1, 32
+c0001654:	b0000000 	imm	0
+c0001658:	b8004158 	bri	16728		// c00057b0
+
+
+Note: objdump labels the block <ex_sw_end_vm> because two local symbols
+share address c0001624; the nm output above shows ex_unaligned_fixup is
+that same address.
+
+Reading:
+  c000163c  addik r15, r0, 5704   ; with the imm prefix: r15 = 0xc0001648
+  c0001640  addik r1, r1, -32     ; reserve the ABI argument save area
+  c0001648  brid  -> 0xc000667c   ; == bad_page_fault (nm above)
+  c000164c  nop                   ; delay slot
+  c0001650  addik r1, r1, 32      ; restore -- rtsd r15, 8 returns to
+                                  ; r15+8 = 0xc0001650, exactly here
+  c0001658  bri   -> 0xc00057b0   ; == ret_from_exc (nm above)
+
+Every branch target and the return-address arithmetic check out
+against the symbol table.  This path is not reachable from a normal
+boot (kernel-mode unaligned access whose byte-wise fixup load
+faults), so this static check is the verification of record;
+dynamic coverage would need a fault-injection test.

@@ -1,0 +1,21 @@
+$ microblaze-rtems7-gcc -O2 -S entry_repro_main.c   (handler = do_IRQ stand-in)
+handler:
+	.frame	r1,28,r15		# vars= 0, regs= 0, args= 24
+	.mask	0x00008000
+	addik	r1,r1,-28
+	swi	r5,r1,32
+	swi	r15,r1,0
+	brlid	r15,sink
+	
+	addik	r5,r1,32
+	lwi	r15,r1,0
+	rtsd	r15,8 
+	
+	addik	r1,r1,28
+	.end	handler
+
+$ qemu-system-microblaze -M petalogix-s3adsp1800 -kernel er-0.elf   (entry.S as it is today)
+PT_R1 expected 0xfeedface, got 0x90010160  -> CORRUPTED
+
+$ qemu-system-microblaze -M petalogix-s3adsp1800 -kernel er-1.elf   (argument save area reserved)
+PT_R1 expected 0xfeedface, got 0xfeedface  -> INTACT
